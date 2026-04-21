@@ -1,0 +1,4331 @@
+
+
+Apply this review-grade annotation bundle first.
+
+It gives you:
+
+highlight / underline / strikeout from text selection
+sticky note popup editor
+textbox / callout / arrow / line / shape / stamp
+multi-select
+group move and group resize for box annotations
+lock / unlock
+review status: open / resolved / rejected
+align / distribute / duplicate / copy / paste / delete
+Files
+frontend/src/core/editor/types.ts
+frontend/src/core/annotations/types.ts
+frontend/src/core/annotations/store.ts
+frontend/src/components/toolbar/ToolbarComment.tsx
+frontend/src/components/inspector/InspectorPanel.tsx
+frontend/src/components/annotations/ReviewAnnotationLayer.tsx
+frontend/src/components/workspace/DocumentWorkspace.tsx
+1) frontend/src/core/editor/types.ts
+export type ActiveTool =
+  | 'select'
+  | 'hand'
+  | 'textbox'
+  | 'highlight'
+  | 'underline'
+  | 'strikeout'
+  | 'shape'
+  | 'stamp'
+  | 'sticky-note'
+  | 'callout'
+  | 'line'
+  | 'arrow';
+
+export type SidebarTab = 'thumbnails' | 'bookmarks' | 'comments' | 'search';
+export type InspectorTab = 'properties' | 'style' | 'metadata';
+
+export interface EditorState {
+  activeTool: ActiveTool;
+  sidebarTab: SidebarTab;
+  inspectorTab: InspectorTab;
+  leftPanelWidth: number;
+  rightPanelWidth: number;
+}
+2) frontend/src/core/annotations/types.ts
+export type ReviewStatus = 'open' | 'resolved' | 'rejected';
+
+export type AnnotationType =
+  | 'highlight'
+  | 'underline'
+  | 'strikeout'
+  | 'sticky-note'
+  | 'textbox'
+  | 'callout'
+  | 'shape'
+  | 'line'
+  | 'arrow'
+  | 'stamp';
+
+export interface Point2D {
+  x: number;
+  y: number;
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface TextQuad {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface AnnotationStyle {
+  stroke?: string;
+  fill?: string;
+  textColor?: string;
+  strokeWidth?: number;
+  opacity?: number;
+  fontSize?: number;
+  fontWeight?: 'normal' | 'bold';
+  textAlign?: 'left' | 'center' | 'right';
+}
+
+export interface BaseAnnotation {
+  id: string;
+  type: AnnotationType;
+  pageNumber: number;
+  createdAt: number;
+  updatedAt: number;
+  locked?: boolean;
+  zIndex?: number;
+  reviewStatus?: ReviewStatus;
+  style?: AnnotationStyle;
+}
+
+export interface HighlightAnnotation extends BaseAnnotation {
+  type: 'highlight';
+  quads: TextQuad[];
+  text?: string;
+}
+
+export interface UnderlineAnnotation extends BaseAnnotation {
+  type: 'underline';
+  quads: TextQuad[];
+  text?: string;
+}
+
+export interface StrikeoutAnnotation extends BaseAnnotation {
+  type: 'strikeout';
+  quads: TextQuad[];
+  text?: string;
+}
+
+export interface StickyNoteAnnotation extends BaseAnnotation {
+  type: 'sticky-note';
+  anchor: Point2D;
+  title?: string;
+  text: string;
+  isOpen?: boolean;
+}
+
+export interface TextboxAnnotation extends BaseAnnotation {
+  type: 'textbox';
+  rect: Rect;
+  text: string;
+  autoSize?: boolean;
+}
+
+export interface CalloutAnnotation extends BaseAnnotation {
+  type: 'callout';
+  anchor: Point2D;
+  elbow?: Point2D | null;
+  rect: Rect;
+  text: string;
+  autoSize?: boolean;
+}
+
+export interface ShapeAnnotation extends BaseAnnotation {
+  type: 'shape';
+  rect: Rect;
+}
+
+export interface LineAnnotation extends BaseAnnotation {
+  type: 'line' | 'arrow';
+  start: Point2D;
+  end: Point2D;
+}
+
+export interface StampAnnotation extends BaseAnnotation {
+  type: 'stamp';
+  rect: Rect;
+  text: string;
+}
+
+export type PdfAnnotation =
+  | HighlightAnnotation
+  | UnderlineAnnotation
+  | StrikeoutAnnotation
+  | StickyNoteAnnotation
+  | TextboxAnnotation
+  | CalloutAnnotation
+  | ShapeAnnotation
+  | LineAnnotation
+  | StampAnnotation;
+3) frontend/src/core/annotations/store.ts
+import { create } from 'zustand';
+import { v4 as uuidv4 } from 'uuid';
+import type { PdfAnnotation, ReviewStatus, AnnotationStyle } from './types';
+
+export type AlignMode =
+  | 'left'
+  | 'right'
+  | 'top'
+  | 'bottom'
+  | 'center-horizontal'
+  | 'center-vertical';
+
+export type DistributeMode = 'horizontal' | 'vertical';
+
+interface AnnotationState {
+  annotations: PdfAnnotation[];
+  history: PdfAnnotation[][];
+  future: PdfAnnotation[][];
+  activeAnnotationId: string | null;
+  selectedAnnotationIds: string[];
+  clipboard: PdfAnnotation[];
+}
+
+interface AnnotationActions {
+  addAnnotation: (annotation: PdfAnnotation) => void;
+  updateAnnotation: (id: string, data: Partial<PdfAnnotation>) => void;
+  updateManyAnnotations: (updates: Array<{ id: string; data: Partial<PdfAnnotation> }>) => void;
+  deleteAnnotation: (id: string) => void;
+  deleteSelection: () => void;
+  setActiveAnnotationId: (id: string | null) => void;
+  setSelection: (ids: string[]) => void;
+  toggleSelection: (id: string) => void;
+  clearSelection: () => void;
+  undo: () => void;
+  redo: () => void;
+  setAnnotations: (annotations: PdfAnnotation[]) => void;
+  copySelection: () => void;
+  pasteClipboard: (targetPage?: number) => void;
+  duplicateSelection: () => void;
+  alignSelection: (mode: AlignMode) => void;
+  distributeSelection: (mode: DistributeMode) => void;
+  setReviewStatusForSelection: (status: ReviewStatus) => void;
+  toggleLockSelection: () => void;
+  updateStyleForSelection: (stylePatch: Partial<AnnotationStyle>) => void;
+}
+
+const MAX_HISTORY = 50;
+
+function cloneAnnotation<T extends PdfAnnotation>(annotation: T): T {
+  return {
+    ...annotation,
+    style: annotation.style ? { ...annotation.style } : undefined,
+    ...(annotation.type === 'highlight' ||
+    annotation.type === 'underline' ||
+    annotation.type === 'strikeout'
+      ? { quads: annotation.quads.map((quad) => ({ ...quad })) }
+      : {}),
+    ...(annotation.type === 'sticky-note'
+      ? { anchor: { ...annotation.anchor } }
+      : {}),
+    ...(annotation.type === 'callout'
+      ? {
+          anchor: { ...annotation.anchor },
+          elbow: annotation.elbow ? { ...annotation.elbow } : annotation.elbow,
+          rect: { ...annotation.rect },
+        }
+      : {}),
+    ...('rect' in annotation ? { rect: { ...annotation.rect } } : {}),
+    ...('start' in annotation ? { start: { ...annotation.start }, end: { ...annotation.end } } : {}),
+  } as T;
+}
+
+function normalizeIds(ids: string[], annotations: PdfAnnotation[]): string[] {
+  const allowed = new Set(annotations.map((annotation) => annotation.id));
+  return Array.from(new Set(ids)).filter((id) => allowed.has(id));
+}
+
+function selectedAnnotations(
+  annotations: PdfAnnotation[],
+  ids: string[],
+): PdfAnnotation[] {
+  const idSet = new Set(ids);
+  return annotations.filter((annotation) => idSet.has(annotation.id));
+}
+
+function snapshot(
+  state: AnnotationState,
+  nextAnnotations: PdfAnnotation[],
+  nextSelectedIds?: string[],
+  nextActiveId?: string | null,
+) {
+  return {
+    annotations: nextAnnotations.map(cloneAnnotation),
+    history: [...state.history, state.annotations.map(cloneAnnotation)].slice(-MAX_HISTORY),
+    future: [],
+    selectedAnnotationIds: normalizeIds(
+      nextSelectedIds ?? state.selectedAnnotationIds,
+      nextAnnotations,
+    ),
+    activeAnnotationId:
+      nextActiveId !== undefined
+        ? nextActiveId
+        : normalizeIds(state.selectedAnnotationIds, nextAnnotations)[0] ?? null,
+  };
+}
+
+export const useAnnotationStore = create<AnnotationState & AnnotationActions>((set, get) => ({
+  annotations: [],
+  history: [],
+  future: [],
+  activeAnnotationId: null,
+  selectedAnnotationIds: [],
+  clipboard: [],
+
+  addAnnotation: (annotation) =>
+    set((state) =>
+      snapshot(state, [...state.annotations, cloneAnnotation(annotation)], [annotation.id], annotation.id),
+    ),
+
+  updateAnnotation: (id, data) =>
+    set((state) => {
+      const nextAnnotations = state.annotations.map((annotation) =>
+        annotation.id === id
+          ? ({
+              ...annotation,
+              ...data,
+              updatedAt: Date.now(),
+            } as PdfAnnotation)
+          : annotation,
+      );
+      return snapshot(state, nextAnnotations);
+    }),
+
+  updateManyAnnotations: (updates) =>
+    set((state) => {
+      const patchMap = new Map(updates.map((entry) => [entry.id, entry.data]));
+      const nextAnnotations = state.annotations.map((annotation) => {
+        const patch = patchMap.get(annotation.id);
+        return patch
+          ? ({
+              ...annotation,
+              ...patch,
+              updatedAt: Date.now(),
+            } as PdfAnnotation)
+          : annotation;
+      });
+      return snapshot(state, nextAnnotations);
+    }),
+
+  deleteAnnotation: (id) =>
+    set((state) => {
+      const nextAnnotations = state.annotations.filter((annotation) => annotation.id !== id);
+      const nextSelectedIds = state.selectedAnnotationIds.filter((value) => value !== id);
+      const nextActiveId =
+        state.activeAnnotationId === id ? nextSelectedIds[0] ?? null : state.activeAnnotationId;
+      return snapshot(state, nextAnnotations, nextSelectedIds, nextActiveId);
+    }),
+
+  deleteSelection: () =>
+    set((state) => {
+      if (state.selectedAnnotationIds.length === 0) return state;
+      const selectedSet = new Set(state.selectedAnnotationIds);
+      const nextAnnotations = state.annotations.filter(
+        (annotation) => !selectedSet.has(annotation.id),
+      );
+      return snapshot(state, nextAnnotations, [], null);
+    }),
+
+  setActiveAnnotationId: (id) =>
+    set({
+      activeAnnotationId: id,
+      selectedAnnotationIds: id ? [id] : [],
+    }),
+
+  setSelection: (ids) =>
+    set((state) => {
+      const normalized = normalizeIds(ids, state.annotations);
+      return {
+        selectedAnnotationIds: normalized,
+        activeAnnotationId: normalized[0] ?? null,
+      };
+    }),
+
+  toggleSelection: (id) =>
+    set((state) => {
+      const exists = state.selectedAnnotationIds.includes(id);
+      const next = exists
+        ? state.selectedAnnotationIds.filter((value) => value !== id)
+        : [...state.selectedAnnotationIds, id];
+
+      return {
+        selectedAnnotationIds: next,
+        activeAnnotationId: next[0] ?? state.activeAnnotationId,
+      };
+    }),
+
+  clearSelection: () =>
+    set({
+      selectedAnnotationIds: [],
+      activeAnnotationId: null,
+    }),
+
+  undo: () =>
+    set((state) => {
+      if (state.history.length === 0) return state;
+      const previous = state.history[state.history.length - 1];
+      const newHistory = state.history.slice(0, -1);
+      const newFuture = [state.annotations.map(cloneAnnotation), ...state.future];
+
+      return {
+        annotations: previous.map(cloneAnnotation),
+        history: newHistory,
+        future: newFuture,
+        selectedAnnotationIds: [],
+        activeAnnotationId: null,
+      };
+    }),
+
+  redo: () =>
+    set((state) => {
+      if (state.future.length === 0) return state;
+      const next = state.future[0];
+      const newFuture = state.future.slice(1);
+      const newHistory = [...state.history, state.annotations.map(cloneAnnotation)];
+
+      return {
+        annotations: next.map(cloneAnnotation),
+        history: newHistory,
+        future: newFuture,
+        selectedAnnotationIds: [],
+        activeAnnotationId: null,
+      };
+    }),
+
+  setAnnotations: (annotations) =>
+    set({
+      annotations: annotations.map(cloneAnnotation),
+      history: [],
+      future: [],
+      selectedAnnotationIds: [],
+      activeAnnotationId: null,
+    }),
+
+  copySelection: () =>
+    set((state) => {
+      const ids =
+        state.selectedAnnotationIds.length > 0
+          ? state.selectedAnnotationIds
+          : state.activeAnnotationId
+          ? [state.activeAnnotationId]
+          : [];
+
+      const copied = selectedAnnotations(state.annotations, ids).map(cloneAnnotation);
+      return { clipboard: copied };
+    }),
+
+  pasteClipboard: (targetPage) =>
+    set((state) => {
+      if (state.clipboard.length === 0) return state;
+
+      const now = Date.now();
+      const pasted = state.clipboard.map((annotation, index) => {
+        const cloned = cloneAnnotation(annotation);
+        const dx = 18;
+        const dy = 18 + index * 4;
+
+        if ('rect' in cloned) {
+          cloned.rect.x += dx;
+          cloned.rect.y += dy;
+        }
+        if ('anchor' in cloned) {
+          cloned.anchor.x += dx;
+          cloned.anchor.y += dy;
+        }
+        if ('start' in cloned && 'end' in cloned) {
+          cloned.start.x += dx;
+          cloned.start.y += dy;
+          cloned.end.x += dx;
+          cloned.end.y += dy;
+        }
+
+        return {
+          ...cloned,
+          id: uuidv4(),
+          pageNumber: targetPage ?? cloned.pageNumber,
+          createdAt: now,
+          updatedAt: now,
+        };
+      });
+
+      return snapshot(
+        state,
+        [...state.annotations, ...pasted],
+        pasted.map((annotation) => annotation.id),
+        pasted[0]?.id ?? null,
+      );
+    }),
+
+  duplicateSelection: () =>
+    set((state) => {
+      const ids =
+        state.selectedAnnotationIds.length > 0
+          ? state.selectedAnnotationIds
+          : state.activeAnnotationId
+          ? [state.activeAnnotationId]
+          : [];
+
+      if (ids.length === 0) return state;
+
+      const now = Date.now();
+      const duplicated = selectedAnnotations(state.annotations, ids).map((annotation, index) => {
+        const cloned = cloneAnnotation(annotation);
+        const dx = 20;
+        const dy = 20 + index * 4;
+
+        if ('rect' in cloned) {
+          cloned.rect.x += dx;
+          cloned.rect.y += dy;
+        }
+        if ('anchor' in cloned) {
+          cloned.anchor.x += dx;
+          cloned.anchor.y += dy;
+        }
+        if ('start' in cloned && 'end' in cloned) {
+          cloned.start.x += dx;
+          cloned.start.y += dy;
+          cloned.end.x += dx;
+          cloned.end.y += dy;
+        }
+
+        return {
+          ...cloned,
+          id: uuidv4(),
+          createdAt: now,
+          updatedAt: now,
+        };
+      });
+
+      return snapshot(
+        state,
+        [...state.annotations, ...duplicated],
+        duplicated.map((annotation) => annotation.id),
+        duplicated[0]?.id ?? null,
+      );
+    }),
+
+  alignSelection: (mode) =>
+    set((state) => {
+      const selected = selectedAnnotations(state.annotations, state.selectedAnnotationIds).filter(
+        (annotation) => 'rect' in annotation && annotation.locked !== true,
+      ) as Array<PdfAnnotation & { rect: { x: number; y: number; width: number; height: number } }>;
+
+      if (selected.length < 2) return state;
+
+      const left = Math.min(...selected.map((annotation) => annotation.rect.x));
+      const top = Math.min(...selected.map((annotation) => annotation.rect.y));
+      const right = Math.max(...selected.map((annotation) => annotation.rect.x + annotation.rect.width));
+      const bottom = Math.max(...selected.map((annotation) => annotation.rect.y + annotation.rect.height));
+      const centerX = (left + right) / 2;
+      const centerY = (top + bottom) / 2;
+
+      const selectedSet = new Set(selected.map((annotation) => annotation.id));
+
+      const nextAnnotations = state.annotations.map((annotation) => {
+        if (!selectedSet.has(annotation.id) || !('rect' in annotation)) return annotation;
+
+        const rect = { ...annotation.rect };
+        if (mode === 'left') rect.x = left;
+        if (mode === 'right') rect.x = right - rect.width;
+        if (mode === 'top') rect.y = top;
+        if (mode === 'bottom') rect.y = bottom - rect.height;
+        if (mode === 'center-horizontal') rect.x = centerX - rect.width / 2;
+        if (mode === 'center-vertical') rect.y = centerY - rect.height / 2;
+
+        return {
+          ...annotation,
+          rect,
+          updatedAt: Date.now(),
+        } as PdfAnnotation;
+      });
+
+      return snapshot(state, nextAnnotations);
+    }),
+
+  distributeSelection: (mode) =>
+    set((state) => {
+      const selected = selectedAnnotations(state.annotations, state.selectedAnnotationIds).filter(
+        (annotation) => 'rect' in annotation && annotation.locked !== true,
+      ) as Array<PdfAnnotation & { rect: { x: number; y: number; width: number; height: number } }>;
+
+      if (selected.length < 3) return state;
+
+      const sorted =
+        mode === 'horizontal'
+          ? [...selected].sort((a, b) => a.rect.x - b.rect.x)
+          : [...selected].sort((a, b) => a.rect.y - b.rect.y);
+
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      const middle = sorted.slice(1, -1);
+
+      const totalMiddleSize = middle.reduce(
+        (sum, annotation) =>
+          sum + (mode === 'horizontal' ? annotation.rect.width : annotation.rect.height),
+        0,
+      );
+
+      const start =
+        mode === 'horizontal'
+          ? first.rect.x + first.rect.width
+          : first.rect.y + first.rect.height;
+
+      const end = mode === 'horizontal' ? last.rect.x : last.rect.y;
+      const gap = middle.length > 0 ? (end - start - totalMiddleSize) / (middle.length + 1) : 0;
+
+      let cursor = start + gap;
+      const nextById = new Map<string, PdfAnnotation>();
+
+      for (const annotation of middle) {
+        const rect = { ...annotation.rect };
+        if (mode === 'horizontal') {
+          rect.x = cursor;
+          cursor += rect.width + gap;
+        } else {
+          rect.y = cursor;
+          cursor += rect.height + gap;
+        }
+
+        nextById.set(annotation.id, {
+          ...annotation,
+          rect,
+          updatedAt: Date.now(),
+        } as PdfAnnotation);
+      }
+
+      const nextAnnotations = state.annotations.map(
+        (annotation) => nextById.get(annotation.id) ?? annotation,
+      );
+
+      return snapshot(state, nextAnnotations);
+    }),
+
+  setReviewStatusForSelection: (status) =>
+    set((state) => {
+      const selectedSet = new Set(state.selectedAnnotationIds);
+      const nextAnnotations = state.annotations.map((annotation) =>
+        selectedSet.has(annotation.id)
+          ? { ...annotation, reviewStatus: status, updatedAt: Date.now() }
+          : annotation,
+      );
+      return snapshot(state, nextAnnotations);
+    }),
+
+  toggleLockSelection: () =>
+    set((state) => {
+      const selected = selectedAnnotations(state.annotations, state.selectedAnnotationIds);
+      if (selected.length === 0) return state;
+      const shouldLock = selected.some((annotation) => annotation.locked !== true);
+      const selectedSet = new Set(state.selectedAnnotationIds);
+      const nextAnnotations = state.annotations.map((annotation) =>
+        selectedSet.has(annotation.id)
+          ? { ...annotation, locked: shouldLock, updatedAt: Date.now() }
+          : annotation,
+      );
+      return snapshot(state, nextAnnotations);
+    }),
+
+  updateStyleForSelection: (stylePatch) =>
+    set((state) => {
+      const selectedSet = new Set(state.selectedAnnotationIds);
+      const nextAnnotations = state.annotations.map((annotation) =>
+        selectedSet.has(annotation.id)
+          ? {
+              ...annotation,
+              style: {
+                ...(annotation.style ?? {}),
+                ...stylePatch,
+              },
+              updatedAt: Date.now(),
+            }
+          : annotation,
+      );
+      return snapshot(state, nextAnnotations);
+    }),
+}));
+4) frontend/src/components/toolbar/ToolbarComment.tsx
+import React from 'react';
+import {
+  Type,
+  Highlighter,
+  Underline as UnderlineIcon,
+  Strikethrough,
+  Square,
+  Stamp,
+  MessageSquare,
+  Undo,
+  Redo,
+  MoveRight,
+  Minus,
+  MessageCircle,
+} from 'lucide-react';
+import { useEditorStore } from '@/core/editor/store';
+import { useAnnotationStore } from '@/core/annotations/store';
+import { useSessionStore } from '@/core/session/store';
+import type { ActiveTool } from '@/core/editor/types';
+import { Button } from '@/components/ui/Button';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { Separator } from '@/components/ui/Separator';
+
+export const ToolbarComment: React.FC = () => {
+  const { activeTool, setActiveTool } = useEditorStore();
+  const {
+    undo,
+    redo,
+    history,
+    future,
+    selectedAnnotationIds,
+    copySelection,
+    pasteClipboard,
+    duplicateSelection,
+    alignSelection,
+    distributeSelection,
+    deleteSelection,
+    toggleLockSelection,
+    setReviewStatusForSelection,
+  } = useAnnotationStore();
+
+  const { viewState } = useSessionStore();
+  const hasSelection = selectedAnnotationIds.length > 0;
+
+  const handleToolClick = (
+    tool: Exclude<ActiveTool, 'select' | 'hand'>,
+  ) => {
+    setActiveTool(activeTool === tool ? 'select' : tool);
+  };
+
+  const getToolVariant = (tool: string) =>
+    activeTool === tool ? 'secondary' : 'ghost';
+
+  return (
+    <div className="flex items-center space-x-1 shrink-0" role="toolbar" aria-label="Review annotation tools">
+      <Tooltip content="Text Box">
+        <Button variant={getToolVariant('textbox')} size="icon" onClick={() => handleToolClick('textbox')}>
+          <Type className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Highlight">
+        <Button variant={getToolVariant('highlight')} size="icon" onClick={() => handleToolClick('highlight')}>
+          <Highlighter className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Underline">
+        <Button variant={getToolVariant('underline')} size="icon" onClick={() => handleToolClick('underline')}>
+          <UnderlineIcon className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Strikeout">
+        <Button variant={getToolVariant('strikeout')} size="icon" onClick={() => handleToolClick('strikeout')}>
+          <Strikethrough className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Sticky Note">
+        <Button variant={getToolVariant('sticky-note')} size="icon" onClick={() => handleToolClick('sticky-note')}>
+          <MessageSquare className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Callout">
+        <Button variant={getToolVariant('callout')} size="icon" onClick={() => handleToolClick('callout')}>
+          <MessageCircle className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Shape">
+        <Button variant={getToolVariant('shape')} size="icon" onClick={() => handleToolClick('shape')}>
+          <Square className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Line">
+        <Button variant={getToolVariant('line')} size="icon" onClick={() => handleToolClick('line')}>
+          <Minus className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Arrow">
+        <Button variant={getToolVariant('arrow')} size="icon" onClick={() => handleToolClick('arrow')}>
+          <MoveRight className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Stamp">
+        <Button variant={getToolVariant('stamp')} size="icon" onClick={() => handleToolClick('stamp')}>
+          <Stamp className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Separator orientation="vertical" className="h-6" />
+
+      <Button variant="ghost" size="sm" onClick={copySelection} disabled={!hasSelection}>
+        Copy
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => pasteClipboard(viewState.currentPage)}>
+        Paste
+      </Button>
+      <Button variant="ghost" size="sm" onClick={duplicateSelection} disabled={!hasSelection}>
+        Duplicate
+      </Button>
+      <Button variant="ghost" size="sm" onClick={deleteSelection} disabled={!hasSelection}>
+        Delete
+      </Button>
+
+      <Separator orientation="vertical" className="h-6" />
+
+      <Button variant="ghost" size="sm" onClick={() => alignSelection('left')} disabled={selectedAnnotationIds.length < 2}>
+        Align L
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => alignSelection('top')} disabled={selectedAnnotationIds.length < 2}>
+        Align T
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => distributeSelection('horizontal')} disabled={selectedAnnotationIds.length < 3}>
+        Dist H
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => distributeSelection('vertical')} disabled={selectedAnnotationIds.length < 3}>
+        Dist V
+      </Button>
+
+      <Separator orientation="vertical" className="h-6" />
+
+      <Button variant="ghost" size="sm" onClick={toggleLockSelection} disabled={!hasSelection}>
+        Lock
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => setReviewStatusForSelection('open')} disabled={!hasSelection}>
+        Open
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => setReviewStatusForSelection('resolved')} disabled={!hasSelection}>
+        Resolve
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => setReviewStatusForSelection('rejected')} disabled={!hasSelection}>
+        Reject
+      </Button>
+
+      <Separator orientation="vertical" className="h-6" />
+
+      <Tooltip content="Undo">
+        <Button variant="ghost" size="icon" onClick={undo} disabled={history.length === 0}>
+          <Undo className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Redo">
+        <Button variant="ghost" size="icon" onClick={redo} disabled={future.length === 0}>
+          <Redo className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+    </div>
+  );
+};
+5) frontend/src/components/inspector/InspectorPanel.tsx
+import React from 'react';
+import { useAnnotationStore } from '@/core/annotations/store';
+import type { AnnotationStyle, PdfAnnotation, ReviewStatus } from '@/core/annotations/types';
+
+function getSelectedAnnotations(all: PdfAnnotation[], ids: string[]) {
+  const set = new Set(ids);
+  return all.filter((annotation) => set.has(annotation.id));
+}
+
+function firstSelected(all: PdfAnnotation[], ids: string[]) {
+  return getSelectedAnnotations(all, ids)[0] ?? null;
+}
+
+const baseInputClass =
+  'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+export const InspectorPanel: React.FC = () => {
+  const {
+    annotations,
+    selectedAnnotationIds,
+    updateAnnotation,
+    updateStyleForSelection,
+    setReviewStatusForSelection,
+    toggleLockSelection,
+  } = useAnnotationStore();
+
+  const selected = getSelectedAnnotations(annotations, selectedAnnotationIds);
+  const active = firstSelected(annotations, selectedAnnotationIds);
+
+  if (!active) {
+    return (
+      <div className="h-full p-4 text-sm text-slate-500 dark:text-slate-400">
+        Select an annotation to edit review properties.
+      </div>
+    );
+  }
+
+  const style: AnnotationStyle = active.style ?? {};
+  const isMulti = selected.length > 1;
+
+  const updateText = (value: string) => {
+    if (active.type === 'textbox' || active.type === 'callout' || active.type === 'sticky-note' || active.type === 'stamp') {
+      updateAnnotation(active.id, { text: value } as Partial<PdfAnnotation>);
+    }
+  };
+
+  const updateTitle = (value: string) => {
+    if (active.type === 'sticky-note') {
+      updateAnnotation(active.id, { title: value } as Partial<PdfAnnotation>);
+    }
+  };
+
+  const updateStatus = (status: ReviewStatus) => {
+    setReviewStatusForSelection(status);
+  };
+
+  return (
+    <div className="h-full overflow-auto p-4 space-y-5">
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+          Selection
+        </div>
+        <div className="text-sm text-slate-800 dark:text-slate-100">
+          {isMulti ? `${selected.length} annotations selected` : active.type}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+          Review status
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <button className="rounded-md border px-3 py-2 text-sm" onClick={() => updateStatus('open')}>
+            Open
+          </button>
+          <button className="rounded-md border px-3 py-2 text-sm" onClick={() => updateStatus('resolved')}>
+            Resolved
+          </button>
+          <button className="rounded-md border px-3 py-2 text-sm" onClick={() => updateStatus('rejected')}>
+            Rejected
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+          Locking
+        </div>
+        <button className="rounded-md border px-3 py-2 text-sm" onClick={toggleLockSelection}>
+          Toggle Lock
+        </button>
+      </div>
+
+      {(active.type === 'textbox' ||
+        active.type === 'callout' ||
+        active.type === 'sticky-note' ||
+        active.type === 'stamp') && (
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+            Content
+          </div>
+
+          {active.type === 'sticky-note' && (
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+                Title
+              </label>
+              <input
+                className={baseInputClass}
+                value={active.title ?? ''}
+                onChange={(e) => updateTitle(e.target.value)}
+              />
+            </div>
+          )}
+
+          <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+            Text
+          </label>
+          <textarea
+            className={`${baseInputClass} min-h-[120px] resize-y`}
+            value={active.text}
+            onChange={(e) => updateText(e.target.value)}
+          />
+        </div>
+      )}
+
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+          Style
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Fill</span>
+            <input
+              type="color"
+              className="h-10 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2"
+              value={style.fill ?? '#ffffff'}
+              onChange={(e) => updateStyleForSelection({ fill: e.target.value })}
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Stroke</span>
+            <input
+              type="color"
+              className="h-10 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2"
+              value={style.stroke ?? '#475569'}
+              onChange={(e) => updateStyleForSelection({ stroke: e.target.value })}
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Text</span>
+            <input
+              type="color"
+              className="h-10 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2"
+              value={style.textColor ?? '#111827'}
+              onChange={(e) => updateStyleForSelection({ textColor: e.target.value })}
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Opacity</span>
+            <input
+              className={baseInputClass}
+              type="number"
+              min="0"
+              max="1"
+              step="0.05"
+              value={style.opacity ?? 0.9}
+              onChange={(e) => updateStyleForSelection({ opacity: Number(e.target.value) })}
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Font size</span>
+            <input
+              className={baseInputClass}
+              type="number"
+              min="8"
+              max="48"
+              step="1"
+              value={style.fontSize ?? 12}
+              onChange={(e) => updateStyleForSelection({ fontSize: Number(e.target.value) })}
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Stroke width</span>
+            <input
+              className={baseInputClass}
+              type="number"
+              min="1"
+              max="8"
+              step="1"
+              value={style.strokeWidth ?? 1}
+              onChange={(e) => updateStyleForSelection({ strokeWidth: Number(e.target.value) })}
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Weight</span>
+            <select
+              className={baseInputClass}
+              value={style.fontWeight ?? 'normal'}
+              onChange={(e) => updateStyleForSelection({ fontWeight: e.target.value as 'normal' | 'bold' })}
+            >
+              <option value="normal">normal</option>
+              <option value="bold">bold</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Align</span>
+            <select
+              className={baseInputClass}
+              value={style.textAlign ?? 'left'}
+              onChange={(e) => updateStyleForSelection({ textAlign: e.target.value as 'left' | 'center' | 'right' })}
+            >
+              <option value="left">left</option>
+              <option value="center">center</option>
+              <option value="right">right</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+};
+6) frontend/src/components/annotations/ReviewAnnotationLayer.tsx
+import React from 'react';
+import { Lock, MessageSquare } from 'lucide-react';
+import type {
+  PdfAnnotation,
+  CalloutAnnotation,
+  HighlightAnnotation,
+  UnderlineAnnotation,
+  StrikeoutAnnotation,
+  StickyNoteAnnotation,
+  TextboxAnnotation,
+  StampAnnotation,
+  ShapeAnnotation,
+  LineAnnotation,
+  Rect,
+  TextQuad,
+} from '@/core/annotations/types';
+
+function statusColor(status: PdfAnnotation['reviewStatus']) {
+  if (status === 'resolved') return '#059669';
+  if (status === 'rejected') return '#dc2626';
+  return '#2563eb';
+}
+
+function groupRectFromQuads(quads: TextQuad[]): Rect {
+  const left = Math.min(...quads.map((q) => q.x));
+  const top = Math.min(...quads.map((q) => q.y));
+  const right = Math.max(...quads.map((q) => q.x + q.width));
+  const bottom = Math.max(...quads.map((q) => q.y + q.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function annotationBadge(annotation: PdfAnnotation) {
+  return annotation.reviewStatus ? annotation.reviewStatus.toUpperCase() : null;
+}
+
+const StatusChip: React.FC<{ annotation: PdfAnnotation; scale: number; rect: Rect }> = ({
+  annotation,
+  scale,
+  rect,
+}) => {
+  const label = annotationBadge(annotation);
+  if (!label) return null;
+
+  return (
+    <div
+      className="absolute z-10 rounded px-1.5 py-0.5 text-[10px] font-semibold text-white pointer-events-none"
+      style={{
+        left: rect.x * scale,
+        top: Math.max(0, rect.y * scale - 18),
+        backgroundColor: statusColor(annotation.reviewStatus),
+      }}
+    >
+      {label}
+    </div>
+  );
+};
+
+const QuadFillRenderer: React.FC<{
+  annotation: HighlightAnnotation;
+  selected: boolean;
+  scale: number;
+  onSelect: (event: React.MouseEvent<HTMLDivElement>) => void;
+}> = ({ annotation, selected, scale, onSelect }) => {
+  const fill = annotation.style?.fill ?? '#fde047';
+  const opacity = annotation.style?.opacity ?? 0.35;
+  const union = groupRectFromQuads(annotation.quads);
+
+  return (
+    <>
+      <StatusChip annotation={annotation} scale={scale} rect={union} />
+      {annotation.quads.map((quad, index) => (
+        <div
+          key={`${annotation.id}-${index}`}
+          className="absolute"
+          style={{
+            left: quad.x * scale,
+            top: quad.y * scale,
+            width: quad.width * scale,
+            height: quad.height * scale,
+            backgroundColor: fill,
+            opacity,
+            border: selected ? '1px solid rgba(37,99,235,0.9)' : 'none',
+            pointerEvents: 'auto',
+          }}
+          onClick={onSelect}
+        />
+      ))}
+    </>
+  );
+};
+
+const QuadLineRenderer: React.FC<{
+  annotation: UnderlineAnnotation | StrikeoutAnnotation;
+  selected: boolean;
+  scale: number;
+  onSelect: (event: React.MouseEvent<HTMLDivElement>) => void;
+}> = ({ annotation, selected, scale, onSelect }) => {
+  const stroke = annotation.style?.stroke ?? '#2563eb';
+  const strokeWidth = annotation.style?.strokeWidth ?? 2;
+  const opacity = annotation.style?.opacity ?? 0.95;
+  const union = groupRectFromQuads(annotation.quads);
+
+  return (
+    <>
+      <StatusChip annotation={annotation} scale={scale} rect={union} />
+      {annotation.quads.map((quad, index) => {
+        const y =
+          annotation.type === 'underline'
+            ? (quad.y + quad.height - 2) * scale
+            : (quad.y + quad.height * 0.5) * scale;
+
+        return (
+          <div
+            key={`${annotation.id}-${index}`}
+            className="absolute"
+            style={{
+              left: quad.x * scale,
+              top: y,
+              width: quad.width * scale,
+              height: Math.max(2, strokeWidth),
+              backgroundColor: stroke,
+              opacity,
+              outline: selected ? '1px solid rgba(37,99,235,0.45)' : 'none',
+              pointerEvents: 'auto',
+            }}
+            onClick={onSelect}
+          />
+        );
+      })}
+    </>
+  );
+};
+
+const StickyNoteRenderer: React.FC<{
+  annotation: StickyNoteAnnotation;
+  selected: boolean;
+  scale: number;
+  editing: boolean;
+  editingValue: string;
+  setEditingValue: (value: string) => void;
+  setEditing: (editing: boolean) => void;
+  onSelect: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onCommitText: (value: string) => void;
+}> = ({
+  annotation,
+  selected,
+  scale,
+  editing,
+  editingValue,
+  setEditingValue,
+  setEditing,
+  onSelect,
+  onCommitText,
+}) => {
+  const fill = annotation.style?.fill ?? '#facc15';
+  const stroke = annotation.style?.stroke ?? '#a16207';
+  const textColor = annotation.style?.textColor ?? '#111827';
+
+  return (
+    <>
+      <StatusChip
+        annotation={annotation}
+        scale={scale}
+        rect={{ x: annotation.anchor.x, y: annotation.anchor.y, width: 16 / scale, height: 16 / scale }}
+      />
+      <div
+        className="absolute rounded-full shadow cursor-pointer flex items-center justify-center"
+        style={{
+          left: annotation.anchor.x * scale - 9,
+          top: annotation.anchor.y * scale - 9,
+          width: 18,
+          height: 18,
+          backgroundColor: fill,
+          border: selected ? '2px solid #2563eb' : `1px solid ${stroke}`,
+        }}
+        title={annotation.title || 'Note'}
+        onClick={onSelect}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          if (annotation.locked) return;
+          setEditing(true);
+        }}
+      >
+        <MessageSquare className="w-3 h-3 text-slate-900" />
+      </div>
+
+      {selected && (
+        <div
+          className="absolute z-20 rounded-xl border shadow-xl bg-white min-w-[220px] max-w-[280px]"
+          style={{
+            left: annotation.anchor.x * scale + 14,
+            top: annotation.anchor.y * scale - 8,
+            borderColor: '#cbd5e1',
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50 rounded-t-xl">
+            <div className="text-xs font-semibold tracking-wide text-slate-700">
+              {annotation.title || 'Sticky note'}
+            </div>
+            {annotation.locked && <Lock className="w-3.5 h-3.5 text-slate-500" />}
+          </div>
+
+          <div className="p-3">
+            {editing ? (
+              <textarea
+                autoFocus
+                className="w-full min-h-[96px] text-sm bg-white outline-none resize-y text-slate-900"
+                value={editingValue}
+                onChange={(event) => setEditingValue(event.target.value)}
+                onBlur={() => {
+                  onCommitText(editingValue);
+                  setEditing(false);
+                }}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                    onCommitText(editingValue);
+                    setEditing(false);
+                  }
+                  if (event.key === 'Escape') {
+                    setEditing(false);
+                  }
+                }}
+              />
+            ) : (
+              <button
+                className="w-full text-left text-sm text-slate-800 whitespace-pre-wrap break-words"
+                style={{ color: textColor }}
+                onClick={() => {
+                  if (annotation.locked) return;
+                  setEditing(true);
+                }}
+              >
+                {annotation.text || 'Empty note'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+const TextBoxLikeRenderer: React.FC<{
+  annotation: TextboxAnnotation | StampAnnotation | CalloutAnnotation;
+  selected: boolean;
+  scale: number;
+  editing: boolean;
+  editingValue: string;
+  setEditingValue: (value: string) => void;
+  setEditing: (editing: boolean) => void;
+  onSelect: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onMoveStart: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onResizeStart: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onCommitText: (value: string) => void;
+  renderLeader?: React.ReactNode;
+  renderAnchorHandle?: React.ReactNode;
+}> = ({
+  annotation,
+  selected,
+  scale,
+  editing,
+  editingValue,
+  setEditingValue,
+  setEditing,
+  onSelect,
+  onMoveStart,
+  onResizeStart,
+  onCommitText,
+  renderLeader,
+  renderAnchorHandle,
+}) => {
+  const style = annotation.style ?? {};
+  const fill =
+    style.fill ?? (annotation.type === 'stamp' ? '#fef2f2' : '#ffffff');
+  const stroke =
+    style.stroke ?? (annotation.type === 'stamp' ? '#ef4444' : '#475569');
+  const textColor =
+    style.textColor ?? (annotation.type === 'stamp' ? '#b91c1c' : '#0f172a');
+  const fontSize = style.fontSize ?? (annotation.type === 'stamp' ? 14 : 12);
+  const fontWeight = style.fontWeight ?? (annotation.type === 'stamp' ? 'bold' : 'normal');
+
+  return (
+    <>
+      {renderLeader}
+      {renderAnchorHandle}
+      <StatusChip annotation={annotation} scale={scale} rect={annotation.rect} />
+      <div
+        className="absolute overflow-hidden"
+        style={{
+          left: annotation.rect.x * scale,
+          top: annotation.rect.y * scale,
+          width: annotation.rect.width * scale,
+          height: annotation.rect.height * scale,
+          backgroundColor: fill,
+          border: `${selected ? 2 : 1}px solid ${selected ? '#2563eb' : stroke}`,
+          boxShadow: selected ? '0 0 0 2px rgba(37,99,235,0.15)' : 'none',
+        }}
+        onClick={onSelect}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          if (annotation.locked) return;
+          setEditing(true);
+        }}
+        onMouseDown={(event) => {
+          if (annotation.locked) return;
+          onMoveStart(event);
+        }}
+      >
+        {annotation.locked && (
+          <div className="absolute top-1 right-1 opacity-70">
+            <Lock className="w-3.5 h-3.5" />
+          </div>
+        )}
+
+        {editing ? (
+          <textarea
+            autoFocus
+            className="w-full h-full p-1 text-[11px] bg-white/95 outline-none resize-none"
+            value={editingValue}
+            onChange={(event) => setEditingValue(event.target.value)}
+            onBlur={() => {
+              onCommitText(editingValue);
+              setEditing(false);
+            }}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                onCommitText(editingValue);
+                setEditing(false);
+              }
+              if (event.key === 'Escape') {
+                setEditing(false);
+              }
+            }}
+          />
+        ) : (
+          <div
+            className="w-full h-full px-2 py-1 select-none whitespace-pre-wrap break-words"
+            style={{
+              color: textColor,
+              fontSize: `${fontSize * scale}px`,
+              fontWeight,
+              textAlign: style.textAlign ?? 'left',
+              lineHeight: 1.25,
+            }}
+          >
+            {annotation.text}
+          </div>
+        )}
+
+        {selected && !annotation.locked && (
+          <div
+            className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-blue-600 rounded-tl-sm cursor-se-resize"
+            onMouseDown={(event) => {
+              event.stopPropagation();
+              onResizeStart(event);
+            }}
+          />
+        )}
+      </div>
+    </>
+  );
+};
+
+function lineBounds(annotation: LineAnnotation) {
+  const left = Math.min(annotation.start.x, annotation.end.x);
+  const top = Math.min(annotation.start.y, annotation.end.y);
+  const width = Math.abs(annotation.end.x - annotation.start.x) || 1;
+  const height = Math.abs(annotation.end.y - annotation.start.y) || 1;
+  return { left, top, width, height };
+}
+
+function arrowHeadPolygon(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+): string {
+  const angle = Math.atan2(endY - startY, endX - startX);
+  const size = 10;
+  const leftX = endX - size * Math.cos(angle - Math.PI / 6);
+  const leftY = endY - size * Math.sin(angle - Math.PI / 6);
+  const rightX = endX - size * Math.cos(angle + Math.PI / 6);
+  const rightY = endY - size * Math.sin(angle + Math.PI / 6);
+  return `${endX},${endY} ${leftX},${leftY} ${rightX},${rightY}`;
+}
+
+const LineRenderer: React.FC<{
+  annotation: LineAnnotation;
+  selected: boolean;
+  scale: number;
+  onSelect: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onMoveStart: (event: React.MouseEvent<HTMLDivElement>) => void;
+}> = ({ annotation, selected, scale, onSelect, onMoveStart }) => {
+  const bounds = lineBounds(annotation);
+  const stroke = annotation.style?.stroke ?? '#111827';
+  const sx = (annotation.start.x - bounds.left) * scale;
+  const sy = (annotation.start.y - bounds.top) * scale;
+  const ex = (annotation.end.x - bounds.left) * scale;
+  const ey = (annotation.end.y - bounds.top) * scale;
+
+  return (
+    <div
+      className="absolute"
+      style={{
+        left: bounds.left * scale,
+        top: bounds.top * scale,
+        width: bounds.width * scale,
+        height: bounds.height * scale,
+      }}
+      onClick={onSelect}
+      onMouseDown={(event) => {
+        if (annotation.locked) return;
+        onMoveStart(event);
+      }}
+    >
+      <svg width="100%" height="100%" style={{ overflow: 'visible' }}>
+        <line x1={sx} y1={sy} x2={ex} y2={ey} stroke={stroke} strokeWidth={2} />
+        {annotation.type === 'arrow' && (
+          <polygon points={arrowHeadPolygon(sx, sy, ex, ey)} fill={stroke} />
+        )}
+      </svg>
+      {selected && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ outline: '2px solid rgba(37,99,235,0.45)' }}
+        />
+      )}
+    </div>
+  );
+};
+
+export const ReviewAnnotationLayer: React.FC<{
+  annotations: PdfAnnotation[];
+  selectedIds: string[];
+  scale: number;
+  editingId: string | null;
+  editingValue: string;
+  setEditingId: (id: string | null) => void;
+  setEditingValue: (value: string) => void;
+  onSelect: (id: string, event: React.MouseEvent<HTMLDivElement>) => void;
+  onMoveStart: (annotation: PdfAnnotation, event: React.MouseEvent<HTMLDivElement>) => void;
+  onResizeStart: (annotation: PdfAnnotation, event: React.MouseEvent<HTMLDivElement>) => void;
+  onAnchorDragStart: (annotation: CalloutAnnotation, event: React.MouseEvent<HTMLDivElement>) => void;
+  onCommitText: (annotation: PdfAnnotation, value: string) => void;
+}> = ({
+  annotations,
+  selectedIds,
+  scale,
+  editingId,
+  editingValue,
+  setEditingId,
+  setEditingValue,
+  onSelect,
+  onMoveStart,
+  onResizeStart,
+  onAnchorDragStart,
+  onCommitText,
+}) => {
+  return (
+    <>
+      {annotations
+        .slice()
+        .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
+        .map((annotation) => {
+          const selected = selectedIds.includes(annotation.id);
+
+          switch (annotation.type) {
+            case 'highlight':
+              return (
+                <QuadFillRenderer
+                  key={annotation.id}
+                  annotation={annotation}
+                  selected={selected}
+                  scale={scale}
+                  onSelect={(event) => onSelect(annotation.id, event)}
+                />
+              );
+
+            case 'underline':
+            case 'strikeout':
+              return (
+                <QuadLineRenderer
+                  key={annotation.id}
+                  annotation={annotation}
+                  selected={selected}
+                  scale={scale}
+                  onSelect={(event) => onSelect(annotation.id, event)}
+                />
+              );
+
+            case 'sticky-note':
+              return (
+                <StickyNoteRenderer
+                  key={annotation.id}
+                  annotation={annotation}
+                  selected={selected}
+                  scale={scale}
+                  editing={editingId === annotation.id}
+                  editingValue={editingValue}
+                  setEditingValue={setEditingValue}
+                  setEditing={(editing) => setEditingId(editing ? annotation.id : null)}
+                  onSelect={(event) => onSelect(annotation.id, event)}
+                  onCommitText={(value) => onCommitText(annotation, value)}
+                />
+              );
+
+            case 'textbox':
+            case 'stamp':
+              return (
+                <TextBoxLikeRenderer
+                  key={annotation.id}
+                  annotation={annotation}
+                  selected={selected}
+                  scale={scale}
+                  editing={editingId === annotation.id}
+                  editingValue={editingValue}
+                  setEditingValue={setEditingValue}
+                  setEditing={(editing) => setEditingId(editing ? annotation.id : null)}
+                  onSelect={(event) => onSelect(annotation.id, event)}
+                  onMoveStart={(event) => onMoveStart(annotation, event)}
+                  onResizeStart={(event) => onResizeStart(annotation, event)}
+                  onCommitText={(value) => onCommitText(annotation, value)}
+                />
+              );
+
+            case 'callout': {
+              const stroke = annotation.style?.stroke ?? '#475569';
+              const leader = (
+                <svg
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ width: '100%', height: '100%' }}
+                >
+                  <line
+                    x1={annotation.anchor.x * scale}
+                    y1={annotation.anchor.y * scale}
+                    x2={annotation.rect.x * scale}
+                    y2={(annotation.rect.y + annotation.rect.height / 2) * scale}
+                    stroke={stroke}
+                    strokeWidth={2}
+                  />
+                </svg>
+              );
+
+              const anchorHandle =
+                selected && !annotation.locked ? (
+                  <div
+                    className="absolute w-3.5 h-3.5 rounded-full bg-blue-600 border border-white shadow cursor-move"
+                    style={{
+                      left: annotation.anchor.x * scale - 7,
+                      top: annotation.anchor.y * scale - 7,
+                    }}
+                    onMouseDown={(event) => onAnchorDragStart(annotation, event)}
+                    title="Drag callout anchor"
+                  />
+                ) : null;
+
+              return (
+                <TextBoxLikeRenderer
+                  key={annotation.id}
+                  annotation={annotation}
+                  selected={selected}
+                  scale={scale}
+                  editing={editingId === annotation.id}
+                  editingValue={editingValue}
+                  setEditingValue={setEditingValue}
+                  setEditing={(editing) => setEditingId(editing ? annotation.id : null)}
+                  onSelect={(event) => onSelect(annotation.id, event)}
+                  onMoveStart={(event) => onMoveStart(annotation, event)}
+                  onResizeStart={(event) => onResizeStart(annotation, event)}
+                  onCommitText={(value) => onCommitText(annotation, value)}
+                  renderLeader={leader}
+                  renderAnchorHandle={anchorHandle}
+                />
+              );
+            }
+
+            case 'shape':
+              return (
+                <div
+                  key={annotation.id}
+                  className="absolute"
+                  style={{
+                    left: annotation.rect.x * scale,
+                    top: annotation.rect.y * scale,
+                    width: annotation.rect.width * scale,
+                    height: annotation.rect.height * scale,
+                    backgroundColor: annotation.style?.fill ?? 'transparent',
+                    border: `${selected ? 2 : annotation.style?.strokeWidth ?? 1}px solid ${
+                      selected ? '#2563eb' : annotation.style?.stroke ?? '#3b82f6'
+                    }`,
+                  }}
+                  onClick={(event) => onSelect(annotation.id, event)}
+                  onMouseDown={(event) => {
+                    if (annotation.locked) return;
+                    onMoveStart(annotation, event);
+                  }}
+                >
+                  <StatusChip annotation={annotation} scale={scale} rect={annotation.rect} />
+                </div>
+              );
+
+            case 'line':
+            case 'arrow':
+              return (
+                <LineRenderer
+                  key={annotation.id}
+                  annotation={annotation}
+                  selected={selected}
+                  scale={scale}
+                  onSelect={(event) => onSelect(annotation.id, event)}
+                  onMoveStart={(event) => onMoveStart(annotation, event)}
+                />
+              );
+
+            default:
+              return null;
+          }
+        })}
+    </>
+  );
+};
+7) frontend/src/components/workspace/DocumentWorkspace.tsx
+import React from 'react';
+import { UploadCloud } from 'lucide-react';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { v4 as uuidv4 } from 'uuid';
+
+import { PdfRendererAdapter, type TextLayerItem } from '@/adapters/pdf-renderer/PdfRendererAdapter';
+import { loadAnnotations, saveAnnotations } from '@/core/annotations/persistence';
+import { useAnnotationStore } from '@/core/annotations/store';
+import type {
+  PdfAnnotation,
+  Rect,
+  Point2D,
+  TextQuad,
+  CalloutAnnotation,
+  TextboxAnnotation,
+  HighlightAnnotation,
+  UnderlineAnnotation,
+  StrikeoutAnnotation,
+  StickyNoteAnnotation,
+  ShapeAnnotation,
+} from '@/core/annotations/types';
+import { clampRect, autoSizeTextRect, rectIntersects } from '@/core/annotations/geometry';
+import { ReviewAnnotationLayer } from '@/components/annotations/ReviewAnnotationLayer';
+import { useEditorStore } from '@/core/editor/store';
+import { useSessionStore } from '@/core/session/store';
+import { FileAdapter } from '@/adapters/file/FileAdapter';
+import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
+
+type TransformState =
+  | {
+      type: 'move' | 'resize';
+      ids: string[];
+      startClientX: number;
+      startClientY: number;
+      startAnnotations: Record<string, PdfAnnotation>;
+      pageWidth: number;
+      pageHeight: number;
+      targetId: string;
+    }
+  | null;
+
+type GroupResizeState =
+  | {
+      ids: string[];
+      startClientX: number;
+      startClientY: number;
+      startBounds: Rect;
+      startAnnotations: Record<string, PdfAnnotation>;
+      pageWidth: number;
+      pageHeight: number;
+    }
+  | null;
+
+type AnchorDragState =
+  | {
+      id: string;
+      startClientX: number;
+      startClientY: number;
+      startAnchor: Point2D;
+      pageWidth: number;
+      pageHeight: number;
+    }
+  | null;
+
+type SelectionDraft = {
+  text: string;
+  quads: TextQuad[];
+  unionRect: Rect;
+} | null;
+
+function unionQuads(quads: TextQuad[]): Rect {
+  const left = Math.min(...quads.map((q) => q.x));
+  const top = Math.min(...quads.map((q) => q.y));
+  const right = Math.max(...quads.map((q) => q.x + q.width));
+  const bottom = Math.max(...quads.map((q) => q.y + q.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function annotationHitsRect(annotation: PdfAnnotation, rect: Rect): boolean {
+  if ('rect' in annotation) return rectIntersects(annotation.rect, rect);
+  if (annotation.type === 'highlight' || annotation.type === 'underline' || annotation.type === 'strikeout') {
+    return annotation.quads.some((quad) => rectIntersects(quad, rect));
+  }
+  if (annotation.type === 'sticky-note') {
+    return (
+      annotation.anchor.x >= rect.x &&
+      annotation.anchor.x <= rect.x + rect.width &&
+      annotation.anchor.y >= rect.y &&
+      annotation.anchor.y <= rect.y + rect.height
+    );
+  }
+  if ('start' in annotation && 'end' in annotation) {
+    const left = Math.min(annotation.start.x, annotation.end.x);
+    const top = Math.min(annotation.start.y, annotation.end.y);
+    const width = Math.abs(annotation.end.x - annotation.start.x) || 1;
+    const height = Math.abs(annotation.end.y - annotation.start.y) || 1;
+    return rectIntersects({ x: left, y: top, width, height }, rect);
+  }
+  return false;
+}
+
+function isRectResizable(annotation: PdfAnnotation | undefined): boolean {
+  return !!annotation && (
+    annotation.type === 'textbox' ||
+    annotation.type === 'callout' ||
+    annotation.type === 'shape' ||
+    annotation.type === 'stamp'
+  );
+}
+
+function getSelectionBounds(annotations: PdfAnnotation[], selectedIds: string[]): Rect | null {
+  const selected = annotations.filter((annotation) => selectedIds.includes(annotation.id) && isRectResizable(annotation));
+  if (selected.length < 2) return null;
+
+  const rects = selected.map((annotation) => ('rect' in annotation ? annotation.rect : null)).filter(Boolean) as Rect[];
+  if (rects.length < 2) return null;
+
+  const left = Math.min(...rects.map((rect) => rect.x));
+  const top = Math.min(...rects.map((rect) => rect.y));
+  const right = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
+
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+export const DocumentWorkspace: React.FC = () => {
+  const {
+    annotations,
+    setAnnotations,
+    addAnnotation,
+    updateAnnotation,
+    updateManyAnnotations,
+    selectedAnnotationIds,
+    setSelection,
+    toggleSelection,
+    clearSelection,
+  } = useAnnotationStore();
+
+  const { workingBytes, documentKey, viewState, setPage, openDocument } = useSessionStore();
+  const { activeTool } = useEditorStore();
+
+  const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+
+  const handleBrowse = async () => {
+    const [picked] = await FileAdapter.pickPdfFiles(false);
+    if (!picked) return;
+
+    const pageCount = await PdfEditAdapter.countPages(picked.bytes);
+    const nextDocumentKey = await FileAdapter.hashBytes(picked.bytes);
+
+    openDocument({
+      documentKey: nextDocumentKey,
+      fileName: picked.name,
+      bytes: picked.bytes,
+      pageCount,
+      saveHandle: picked.handle ?? null,
+    });
+  };
+
+  React.useEffect(() => {
+    let cancelled = false;
+    let previousDoc: PDFDocumentProxy | null = null;
+
+    const load = async () => {
+      if (!workingBytes) {
+        setPdfDoc(null);
+        setLoadError(null);
+        return;
+      }
+
+      setLoading(true);
+      setLoadError(null);
+
+      try {
+        const doc = await PdfRendererAdapter.loadDocument(workingBytes);
+        if (cancelled) {
+          await doc.destroy();
+          return;
+        }
+
+        previousDoc = doc;
+        setPdfDoc(doc);
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(String(err));
+          setPdfDoc(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+      if (previousDoc) void previousDoc.destroy();
+    };
+  }, [workingBytes]);
+
+  React.useEffect(() => {
+    const loadStored = async () => {
+      if (!documentKey) return;
+      const stored = await loadAnnotations(documentKey);
+      setAnnotations(stored);
+    };
+    void loadStored();
+  }, [documentKey, setAnnotations]);
+
+  React.useEffect(() => {
+    if (!documentKey) return;
+    const timer = window.setTimeout(() => {
+      void saveAnnotations(documentKey, annotations);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [annotations, documentKey]);
+
+  if (!workingBytes) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full bg-slate-100 dark:bg-slate-950/50">
+        <div className="flex flex-col items-center justify-center p-12 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-900 max-w-md w-full text-center">
+          <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mb-6">
+            <UploadCloud className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
+            Open a PDF to begin
+          </h2>
+          <button
+            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium transition-colors"
+            onClick={handleBrowse}
+          >
+            Browse Files
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return <div className="h-full flex items-center justify-center text-slate-500">Loading PDF…</div>;
+  }
+
+  if (loadError) {
+    return <div className="h-full flex items-center justify-center text-red-600">Failed to load PDF: {loadError}</div>;
+  }
+
+  if (!pdfDoc) return null;
+
+  return (
+    <div className="flex flex-col h-full bg-slate-200 dark:bg-slate-950 overflow-auto">
+      <div className="min-h-full flex flex-col items-center py-8">
+        {Array.from({ length: pdfDoc.numPages }, (_, index) => {
+          const pageNumber = index + 1;
+          return (
+            <PageSurface
+              key={pageNumber}
+              doc={pdfDoc}
+              pageNumber={pageNumber}
+              scale={viewState.zoom / 100}
+              activeTool={activeTool}
+              annotations={annotations.filter((ann) => ann.pageNumber === pageNumber)}
+              selectedIds={selectedAnnotationIds}
+              editingId={editingId}
+              setEditingId={setEditingId}
+              onCreateAnnotation={(annotation) => {
+                addAnnotation(annotation);
+                setSelection([annotation.id]);
+              }}
+              onUpdateAnnotation={updateAnnotation}
+              onUpdateManyAnnotations={updateManyAnnotations}
+              onSelectIds={setSelection}
+              onToggleSelectedId={toggleSelection}
+              onClearSelection={clearSelection}
+              onActivate={() => setPage(pageNumber)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const PageSurface: React.FC<{
+  doc: PDFDocumentProxy;
+  pageNumber: number;
+  scale: number;
+  activeTool: string;
+  annotations: PdfAnnotation[];
+  selectedIds: string[];
+  editingId: string | null;
+  setEditingId: (id: string | null) => void;
+  onCreateAnnotation: (annotation: PdfAnnotation) => void;
+  onUpdateAnnotation: (id: string, patch: Partial<PdfAnnotation>) => void;
+  onUpdateManyAnnotations: (
+    updates: Array<{ id: string; data: Partial<PdfAnnotation> }>,
+  ) => void;
+  onSelectIds: (ids: string[]) => void;
+  onToggleSelectedId: (id: string) => void;
+  onClearSelection: () => void;
+  onActivate: () => void;
+}> = ({
+  doc,
+  pageNumber,
+  scale,
+  activeTool,
+  annotations,
+  selectedIds,
+  editingId,
+  setEditingId,
+  onCreateAnnotation,
+  onUpdateAnnotation,
+  onUpdateManyAnnotations,
+  onSelectIds,
+  onToggleSelectedId,
+  onClearSelection,
+  onActivate,
+}) => {
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const pageRef = React.useRef<HTMLDivElement | null>(null);
+
+  const [size, setSize] = React.useState({ width: 800, height: 1000 });
+  const [textItems, setTextItems] = React.useState<TextLayerItem[]>([]);
+  const [editingValue, setEditingValue] = React.useState('');
+  const [marquee, setMarquee] = React.useState<Rect | null>(null);
+  const [selectionDraft, setSelectionDraft] = React.useState<SelectionDraft>(null);
+
+  const transformRef = React.useRef<TransformState>(null);
+  const groupResizeRef = React.useRef<GroupResizeState>(null);
+  const anchorDragRef = React.useRef<AnchorDragState>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const render = async () => {
+      const page = await doc.getPage(pageNumber);
+      const viewport = page.getViewport({ scale });
+
+      if (!cancelled) setSize({ width: viewport.width, height: viewport.height });
+
+      if (!cancelled && canvasRef.current) {
+        await PdfRendererAdapter.renderPage(page, scale, canvasRef.current);
+      }
+
+      const items = await PdfRendererAdapter.getPageTextItems(page, scale);
+      if (!cancelled) setTextItems(items);
+    };
+
+    void render();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [doc, pageNumber, scale]);
+
+  const pageWidth = size.width / scale;
+  const pageHeight = size.height / scale;
+
+  const clearSelectionDraft = () => {
+    setSelectionDraft(null);
+    try {
+      window.getSelection()?.removeAllRanges();
+    } catch {}
+  };
+
+  const getAnnotation = (id: string) => annotations.find((a) => a.id === id);
+
+  const handleSelect = (id: string, event: React.MouseEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    clearSelectionDraft();
+
+    if (event.metaKey || event.ctrlKey) {
+      onToggleSelectedId(id);
+    } else {
+      onSelectIds([id]);
+    }
+  };
+
+  const startMoveOrResize = (annotation: PdfAnnotation, type: 'move' | 'resize', event: React.MouseEvent<HTMLDivElement>) => {
+    if (annotation.locked) return;
+
+    const ids =
+      type === 'move' && selectedIds.includes(annotation.id) && selectedIds.length > 1
+        ? selectedIds.filter((id) => getAnnotation(id)?.locked !== true)
+        : [annotation.id];
+
+    if (!(type === 'move' && ids.length > 1)) {
+      onSelectIds([annotation.id]);
+    }
+
+    const startAnnotations: Record<string, PdfAnnotation> = {};
+    ids.forEach((id) => {
+      const item = getAnnotation(id);
+      if (item) startAnnotations[id] = structuredClone(item);
+    });
+
+    transformRef.current = {
+      type,
+      ids,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startAnnotations,
+      pageWidth,
+      pageHeight,
+      targetId: annotation.id,
+    };
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const state = transformRef.current;
+      if (!state) return;
+
+      const dx = (moveEvent.clientX - state.startClientX) / scale;
+      const dy = (moveEvent.clientY - state.startClientY) / scale;
+
+      if (state.type === 'move') {
+        const updates = state.ids
+          .map((id) => {
+            const item = state.startAnnotations[id];
+            if (!item) return null;
+
+            if ('rect' in item) {
+              const nextRect = clampRect(
+                {
+                  ...item.rect,
+                  x: item.rect.x + dx,
+                  y: item.rect.y + dy,
+                },
+                state.pageWidth,
+                state.pageHeight,
+              );
+
+              if (item.type === 'callout') {
+                const callout = item as CalloutAnnotation;
+                return {
+                  id,
+                  data: {
+                    rect: nextRect,
+                    anchor: {
+                      x: callout.anchor.x + dx,
+                      y: callout.anchor.y + dy,
+                    },
+                  } as Partial<CalloutAnnotation>,
+                };
+              }
+
+              return { id, data: { rect: nextRect } as Partial<PdfAnnotation> };
+            }
+
+            if ('start' in item && 'end' in item) {
+              return {
+                id,
+                data: {
+                  start: { x: item.start.x + dx, y: item.start.y + dy },
+                  end: { x: item.end.x + dx, y: item.end.y + dy },
+                } as Partial<PdfAnnotation>,
+              };
+            }
+
+            if (item.type === 'sticky-note') {
+              return {
+                id,
+                data: {
+                  anchor: {
+                    x: item.anchor.x + dx,
+                    y: item.anchor.y + dy,
+                  },
+                } as Partial<StickyNoteAnnotation>,
+              };
+            }
+
+            return null;
+          })
+          .filter(Boolean) as Array<{ id: string; data: Partial<PdfAnnotation> }>;
+
+        onUpdateManyAnnotations(updates);
+      } else {
+        const item = state.startAnnotations[state.targetId];
+        if (!item || !('rect' in item)) return;
+
+        const nextRect = clampRect(
+          {
+            ...item.rect,
+            width: item.rect.width + dx,
+            height: item.rect.height + dy,
+          },
+          state.pageWidth,
+          state.pageHeight,
+        );
+
+        onUpdateAnnotation(state.targetId, { rect: nextRect });
+      }
+    };
+
+    const onUp = () => {
+      transformRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const startGroupResize = (event: React.MouseEvent<HTMLDivElement>, bounds: Rect) => {
+    const resizableIds = selectedIds.filter((id) => isRectResizable(getAnnotation(id)));
+    if (resizableIds.length < 2) return;
+
+    const startAnnotations: Record<string, PdfAnnotation> = {};
+    resizableIds.forEach((id) => {
+      const item = getAnnotation(id);
+      if (item) startAnnotations[id] = structuredClone(item);
+    });
+
+    groupResizeRef.current = {
+      ids: resizableIds,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startBounds: bounds,
+      startAnnotations,
+      pageWidth,
+      pageHeight,
+    };
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const state = groupResizeRef.current;
+      if (!state) return;
+
+      const dx = (moveEvent.clientX - state.startClientX) / scale;
+      const dy = (moveEvent.clientY - state.startClientY) / scale;
+
+      const nextBounds = clampRect(
+        {
+          ...state.startBounds,
+          width: state.startBounds.width + dx,
+          height: state.startBounds.height + dy,
+        },
+        state.pageWidth,
+        state.pageHeight,
+      );
+
+      const sx = nextBounds.width / Math.max(1, state.startBounds.width);
+      const sy = nextBounds.height / Math.max(1, state.startBounds.height);
+
+      const updates = state.ids
+        .map((id) => {
+          const item = state.startAnnotations[id];
+          if (!item || !('rect' in item)) return null;
+
+          const nx = nextBounds.x + (item.rect.x - state.startBounds.x) * sx;
+          const ny = nextBounds.y + (item.rect.y - state.startBounds.y) * sy;
+          const nw = item.rect.width * sx;
+          const nh = item.rect.height * sy;
+
+          const rect = clampRect(
+            { x: nx, y: ny, width: nw, height: nh },
+            state.pageWidth,
+            state.pageHeight,
+          );
+
+          if (item.type === 'callout') {
+            const callout = item as CalloutAnnotation;
+            return {
+              id,
+              data: {
+                rect,
+                anchor: {
+                  x: nextBounds.x + (callout.anchor.x - state.startBounds.x) * sx,
+                  y: nextBounds.y + (callout.anchor.y - state.startBounds.y) * sy,
+                },
+              } as Partial<CalloutAnnotation>,
+            };
+          }
+
+          return { id, data: { rect } as Partial<PdfAnnotation> };
+        })
+        .filter(Boolean) as Array<{ id: string; data: Partial<PdfAnnotation> }>;
+
+      onUpdateManyAnnotations(updates);
+    };
+
+    const onUp = () => {
+      groupResizeRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const startAnchorDrag = (annotation: CalloutAnnotation, event: React.MouseEvent<HTMLDivElement>) => {
+    if (annotation.locked) return;
+    event.stopPropagation();
+
+    anchorDragRef.current = {
+      id: annotation.id,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startAnchor: annotation.anchor,
+      pageWidth,
+      pageHeight,
+    };
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const state = anchorDragRef.current;
+      if (!state) return;
+
+      const dx = (moveEvent.clientX - state.startClientX) / scale;
+      const dy = (moveEvent.clientY - state.startClientY) / scale;
+
+      onUpdateAnnotation(state.id, {
+        anchor: {
+          x: clamp(state.startAnchor.x + dx, 0, state.pageWidth),
+          y: clamp(state.startAnchor.y + dy, 0, state.pageHeight),
+        },
+      } as Partial<CalloutAnnotation>);
+    };
+
+    const onUp = () => {
+      anchorDragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const handleTextCommit = (annotation: PdfAnnotation, value: string) => {
+    if (annotation.type === 'textbox') {
+      const nextRect =
+        annotation.autoSize !== false
+          ? autoSizeTextRect(value, annotation.style?.fontSize ?? 12, annotation.rect)
+          : annotation.rect;
+
+      onUpdateAnnotation(annotation.id, {
+        text: value,
+        rect: nextRect,
+      } as Partial<TextboxAnnotation>);
+    }
+
+    if (annotation.type === 'callout') {
+      const nextRect =
+        annotation.autoSize !== false
+          ? autoSizeTextRect(value, annotation.style?.fontSize ?? 12, annotation.rect)
+          : annotation.rect;
+
+      onUpdateAnnotation(annotation.id, {
+        text: value,
+        rect: nextRect,
+      } as Partial<CalloutAnnotation>);
+    }
+
+    if (annotation.type === 'sticky-note') {
+      onUpdateAnnotation(annotation.id, {
+        text: value,
+      } as Partial<StickyNoteAnnotation>);
+    }
+
+    if (annotation.type === 'stamp') {
+      onUpdateAnnotation(annotation.id, {
+        text: value,
+      } as Partial<PdfAnnotation>);
+    }
+
+    setEditingId(null);
+  };
+
+  const handleTextSelection = () => {
+    if (activeTool !== 'select' || !pageRef.current) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      setSelectionDraft(null);
+      return;
+    }
+
+    const text = selection.toString().trim();
+    if (!text) {
+      setSelectionDraft(null);
+      return;
+    }
+
+    const pageRect = pageRef.current.getBoundingClientRect();
+    const range = selection.getRangeAt(0);
+
+    const quads = Array.from(range.getClientRects())
+      .map((clientRect) => ({
+        x: (clientRect.left - pageRect.left) / scale,
+        y: (clientRect.top - pageRect.top) / scale,
+        width: clientRect.width / scale,
+        height: clientRect.height / scale,
+      }))
+      .filter((rect) => rect.width > 2 && rect.height > 2);
+
+    if (quads.length === 0) {
+      setSelectionDraft(null);
+      return;
+    }
+
+    setSelectionDraft({
+      text,
+      quads,
+      unionRect: unionQuads(quads),
+    });
+  };
+
+  const createHighlightFromSelection = () => {
+    if (!selectionDraft) return;
+
+    const annotation: HighlightAnnotation = {
+      id: uuidv4(),
+      type: 'highlight',
+      pageNumber,
+      quads: selectionDraft.quads,
+      text: selectionDraft.text,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      reviewStatus: 'open',
+      style: {
+        fill: '#fde047',
+        opacity: 0.35,
+      },
+    };
+
+    onCreateAnnotation(annotation);
+    clearSelectionDraft();
+  };
+
+  const createUnderlineFromSelection = () => {
+    if (!selectionDraft) return;
+
+    const annotation: UnderlineAnnotation = {
+      id: uuidv4(),
+      type: 'underline',
+      pageNumber,
+      quads: selectionDraft.quads,
+      text: selectionDraft.text,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      reviewStatus: 'open',
+      style: {
+        stroke: '#2563eb',
+        strokeWidth: 2,
+        opacity: 0.95,
+      },
+    };
+
+    onCreateAnnotation(annotation);
+    clearSelectionDraft();
+  };
+
+  const createStrikeoutFromSelection = () => {
+    if (!selectionDraft) return;
+
+    const annotation: StrikeoutAnnotation = {
+      id: uuidv4(),
+      type: 'strikeout',
+      pageNumber,
+      quads: selectionDraft.quads,
+      text: selectionDraft.text,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      reviewStatus: 'open',
+      style: {
+        stroke: '#dc2626',
+        strokeWidth: 2,
+        opacity: 0.95,
+      },
+    };
+
+    onCreateAnnotation(annotation);
+    clearSelectionDraft();
+  };
+
+  const createStickyNoteFromSelection = () => {
+    if (!selectionDraft) return;
+
+    const annotation: StickyNoteAnnotation = {
+      id: uuidv4(),
+      type: 'sticky-note',
+      pageNumber,
+      anchor: {
+        x: selectionDraft.unionRect.x + selectionDraft.unionRect.width / 2,
+        y: selectionDraft.unionRect.y + selectionDraft.unionRect.height / 2,
+      },
+      title: 'Note',
+      text: selectionDraft.text,
+      isOpen: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      reviewStatus: 'open',
+      style: {
+        fill: '#facc15',
+        stroke: '#a16207',
+        textColor: '#111827',
+      },
+    };
+
+    onCreateAnnotation(annotation);
+    setEditingId(annotation.id);
+    setEditingValue(annotation.text);
+    clearSelectionDraft();
+  };
+
+  const createCalloutFromSelection = () => {
+    if (!selectionDraft) return;
+
+    const annotation: CalloutAnnotation = {
+      id: uuidv4(),
+      type: 'callout',
+      pageNumber,
+      anchor: {
+        x: selectionDraft.unionRect.x + selectionDraft.unionRect.width / 2,
+        y: selectionDraft.unionRect.y + selectionDraft.unionRect.height / 2,
+      },
+      rect: autoSizeTextRect(selectionDraft.text, 12, {
+        x: Math.min(pageWidth - 220, selectionDraft.unionRect.x + selectionDraft.unionRect.width + 24),
+        y: Math.max(8, selectionDraft.unionRect.y - 8),
+        width: 220,
+        height: 64,
+      }),
+      text: selectionDraft.text,
+      autoSize: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      reviewStatus: 'open',
+      style: {
+        fill: '#ffffff',
+        stroke: '#475569',
+        textColor: '#111827',
+        fontSize: 12,
+      },
+    };
+
+    onCreateAnnotation(annotation);
+    clearSelectionDraft();
+  };
+
+  const startMarquee = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (activeTool !== 'select') return;
+    if (event.target !== event.currentTarget) return;
+
+    clearSelectionDraft();
+
+    const hostRect = event.currentTarget.getBoundingClientRect();
+    const startX = (event.clientX - hostRect.left) / scale;
+    const startY = (event.clientY - hostRect.top) / scale;
+
+    setMarquee({ x: startX, y: startY, width: 0, height: 0 });
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const x = (moveEvent.clientX - hostRect.left) / scale;
+      const y = (moveEvent.clientY - hostRect.top) / scale;
+
+      setMarquee({
+        x: Math.min(startX, x),
+        y: Math.min(startY, y),
+        width: Math.abs(x - startX),
+        height: Math.abs(y - startY),
+      });
+    };
+
+    const onUp = () => {
+      setMarquee((current) => {
+        if (!current) return null;
+
+        const hitIds = annotations
+          .filter((annotation) => annotationHitsRect(annotation, current))
+          .map((annotation) => annotation.id);
+
+        if (event.metaKey || event.ctrlKey) {
+          const merged = Array.from(new Set([...selectedIds, ...hitIds]));
+          onSelectIds(merged);
+        } else {
+          onSelectIds(hitIds);
+        }
+
+        return null;
+      });
+
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const selectionBounds = getSelectionBounds(annotations, selectedIds);
+
+  return (
+    <div
+      ref={pageRef}
+      className="relative bg-white dark:bg-slate-900 shadow-md mb-8 transition-all hover:ring-1 hover:ring-slate-300"
+      style={{ width: size.width, minHeight: size.height }}
+      onClick={onActivate}
+    >
+      <canvas ref={canvasRef} className="block" />
+
+      <div
+        className="absolute inset-0"
+        style={{
+          pointerEvents: activeTool === 'select' ? 'auto' : 'none',
+          userSelect: activeTool === 'select' ? 'text' : 'none',
+        }}
+        onMouseUp={handleTextSelection}
+      >
+        {textItems.map((item) => (
+          <span
+            key={item.id}
+            style={{
+              position: 'absolute',
+              left: item.x,
+              top: item.y,
+              width: item.width,
+              height: item.height,
+              fontSize: item.fontSize,
+              lineHeight: `${item.height}px`,
+              whiteSpace: 'pre',
+              color: 'rgba(0,0,0,0.01)',
+            }}
+          >
+            {item.text}
+          </span>
+        ))}
+      </div>
+
+      {selectionDraft && (
+        <>
+          {selectionDraft.quads.map((quad, index) => (
+            <div
+              key={`selection-${index}`}
+              className="absolute pointer-events-none bg-yellow-300/35 border border-yellow-400/40"
+              style={{
+                left: quad.x * scale,
+                top: quad.y * scale,
+                width: quad.width * scale,
+                height: quad.height * scale,
+              }}
+            />
+          ))}
+
+          <div
+            className="absolute z-30 flex items-center gap-2 rounded-lg bg-slate-900 text-white px-2 py-1 shadow-lg"
+            style={{
+              left: Math.max(6, selectionDraft.unionRect.x * scale),
+              top: Math.max(6, selectionDraft.unionRect.y * scale - 34),
+            }}
+          >
+            <button className="text-xs hover:text-yellow-300" onClick={createHighlightFromSelection}>
+              Highlight
+            </button>
+            <button className="text-xs hover:text-cyan-300" onClick={createUnderlineFromSelection}>
+              Underline
+            </button>
+            <button className="text-xs hover:text-red-300" onClick={createStrikeoutFromSelection}>
+              Strikeout
+            </button>
+            <button className="text-xs hover:text-amber-300" onClick={createStickyNoteFromSelection}>
+              Note
+            </button>
+            <button className="text-xs hover:text-blue-300" onClick={createCalloutFromSelection}>
+              Callout
+            </button>
+            <button className="text-xs opacity-70 hover:opacity-100" onClick={clearSelectionDraft}>
+              ×
+            </button>
+          </div>
+        </>
+      )}
+
+      <div
+        className={`absolute inset-0 ${activeTool !== 'select' ? 'cursor-crosshair' : ''}`}
+        onClick={(event) => {
+          onActivate();
+
+          if (event.target !== event.currentTarget) return;
+
+          if (activeTool !== 'select') {
+            const hostRect = event.currentTarget.getBoundingClientRect();
+            const x = (event.clientX - hostRect.left) / scale;
+            const y = (event.clientY - hostRect.top) / scale;
+
+            if (activeTool === 'textbox') {
+              const annotation: TextboxAnnotation = {
+                id: uuidv4(),
+                type: 'textbox',
+                pageNumber,
+                rect: { x, y, width: 220, height: 40 },
+                text: 'New text box',
+                autoSize: true,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                reviewStatus: 'open',
+                style: {
+                  fill: '#ffffff',
+                  stroke: '#cbd5e1',
+                  textColor: '#0f172a',
+                  fontSize: 12,
+                },
+              };
+              onCreateAnnotation(annotation);
+              return;
+            }
+
+            if (activeTool === 'sticky-note') {
+              const annotation: StickyNoteAnnotation = {
+                id: uuidv4(),
+                type: 'sticky-note',
+                pageNumber,
+                anchor: { x, y },
+                title: 'Note',
+                text: 'New note',
+                isOpen: true,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                reviewStatus: 'open',
+                style: {
+                  fill: '#facc15',
+                  stroke: '#a16207',
+                  textColor: '#111827',
+                },
+              };
+              onCreateAnnotation(annotation);
+              setEditingId(annotation.id);
+              setEditingValue(annotation.text);
+              return;
+            }
+
+            if (activeTool === 'shape') {
+              const annotation: ShapeAnnotation = {
+                id: uuidv4(),
+                type: 'shape',
+                pageNumber,
+                rect: { x, y, width: 180, height: 60 },
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                reviewStatus: 'open',
+                style: {
+                  fill: 'transparent',
+                  stroke: '#3b82f6',
+                  strokeWidth: 2,
+                },
+              };
+              onCreateAnnotation(annotation);
+              return;
+            }
+          } else {
+            onClearSelection();
+            clearSelectionDraft();
+          }
+        }}
+        onMouseDown={startMarquee}
+      >
+        <ReviewAnnotationLayer
+          annotations={annotations}
+          selectedIds={selectedIds}
+          scale={scale}
+          editingId={editingId}
+          editingValue={editingValue}
+          setEditingId={setEditingId}
+          setEditingValue={setEditingValue}
+          onSelect={handleSelect}
+          onMoveStart={(annotation, event) => startMoveOrResize(annotation, 'move', event)}
+          onResizeStart={(annotation, event) => startMoveOrResize(annotation, 'resize', event)}
+          onAnchorDragStart={startAnchorDrag}
+          onCommitText={handleTextCommit}
+        />
+
+        {selectionBounds && (
+          <div
+            className="absolute pointer-events-none border-2 border-blue-500"
+            style={{
+              left: selectionBounds.x * scale,
+              top: selectionBounds.y * scale,
+              width: selectionBounds.width * scale,
+              height: selectionBounds.height * scale,
+            }}
+          >
+            <div
+              className="absolute bottom-0 right-0 w-4 h-4 bg-blue-600 rounded-tl-sm cursor-se-resize pointer-events-auto"
+              onMouseDown={(event) => {
+                event.stopPropagation();
+                startGroupResize(event, selectionBounds);
+              }}
+            />
+          </div>
+        )}
+
+        {marquee && (
+          <div
+            className="absolute border border-blue-500 bg-blue-200/20"
+            style={{
+              left: marquee.x * scale,
+              top: marquee.y * scale,
+              width: marquee.width * scale,
+              height: marquee.height * scale,
+            }}
+          />
+        )}
+      </div>
+
+      <div className="absolute top-2 right-2 bg-slate-900/70 text-white text-xs px-2 py-1 rounded">
+        Page {pageNumber}
+      </div>
+    </div>
+  );
+};
+
+This is the right first bundle for review-grade annotations.
+
+Next high-value step is:
+review sidebar with open/resolved filters, author/date fields, and jump-to-annotation rows.
+
+**6\. Macro / batch actions**
+
+tools update:
+text selection to highlight
+text selection to underline
+text selection to note/callout
+
+
+macros and tool:
+(add right click context menu on thumbnail as applicable)
+page numbering
+file name/date/footer text
+batch text on selected pages
+rotate selected pages
+extract selected pages
+split pages
+add page numbers
+add header/footer to selected pages
+run same recipe on several files
+Thought for 1m 27s
+
+Apply this macro + tools bundle on top of the review-grade annotation patch.
+
+It adds:
+
+text selection to highlight / underline / note / callout in the workspace action bubble
+macro actions for:
+page numbering
+file name / date / footer text
+batch text on selected pages
+rotate selected pages
+extract selected pages
+split pages
+add page numbers
+add header/footer to selected pages
+run same recipe on several files
+right-click context menu on thumbnails for page actions and macro actions
+Files
+frontend/src/core/macro/types.ts
+frontend/src/core/macro/executor.ts
+frontend/src/core/macro/builtins.ts
+frontend/src/core/macro/batchRunner.ts
+frontend/src/adapters/pdf-edit/PdfEditAdapter.ts
+frontend/src/components/toolbar/ToolbarOrganize.tsx
+frontend/src/components/sidebar/SidebarPanel.tsx
+1) frontend/src/core/macro/types.ts
+export type PageSelector =
+  | { mode: 'all' }
+  | { mode: 'current' }
+  | { mode: 'selected' }
+  | { mode: 'range'; from: number; to: number }
+  | { mode: 'list'; pages: number[] }
+  | { mode: 'odd' }
+  | { mode: 'even' };
+
+export type InsertPosition =
+  | { mode: 'before'; page: number }
+  | { mode: 'after'; page: number }
+  | { mode: 'start' }
+  | { mode: 'end' };
+
+export type MacroStep =
+  | { op: 'select_pages'; selector: PageSelector }
+  | { op: 'extract_pages'; selector: PageSelector; outputName?: string }
+  | { op: 'split_pages'; selector: PageSelector; outputName?: string }
+  | { op: 'duplicate_pages'; selector: PageSelector }
+  | { op: 'rotate_pages'; selector: PageSelector; degrees: 90 | 180 | 270 }
+  | { op: 'remove_pages'; selector: PageSelector }
+  | {
+      op: 'insert_blank_page';
+      position: InsertPosition;
+      size: 'match-current' | 'a4' | 'letter' | { width: number; height: number };
+      count?: number;
+    }
+  | {
+      op: 'header_footer_text';
+      selector: PageSelector;
+      zone: 'header' | 'footer';
+      text: string;
+      align: 'left' | 'center' | 'right';
+      marginX: number;
+      marginY: number;
+      fontSize: number;
+      color?: string;
+      opacity?: number;
+      excludeFirstPage?: boolean;
+      excludeLastPage?: boolean;
+      pageNumberToken?: boolean;
+      fileNameToken?: boolean;
+      dateToken?: boolean;
+    }
+  | {
+      op: 'draw_text_on_pages';
+      selector: PageSelector;
+      text: string;
+      x: number;
+      y: number;
+      fontSize: number;
+      color?: string;
+      opacity?: number;
+      align?: 'left' | 'center' | 'right';
+      pageNumberToken?: boolean;
+      fileNameToken?: boolean;
+      dateToken?: boolean;
+    };
+
+export interface MacroRecipe {
+  id: string;
+  name: string;
+  steps: MacroStep[];
+}
+
+export interface MacroExecutionContext {
+  workingBytes: Uint8Array;
+  pageCount: number;
+  selectedPages: number[];
+  currentPage: number;
+  fileName: string;
+  now: Date;
+}
+
+export interface MacroOutputFile {
+  name: string;
+  bytes: Uint8Array;
+}
+
+export interface MacroRunResult {
+  workingBytes: Uint8Array;
+  pageCount: number;
+  selectedPages: number[];
+  logs: string[];
+  outputs: MacroOutputFile[];
+}
+2) frontend/src/core/macro/executor.ts
+import type {
+  InsertPosition,
+  MacroExecutionContext,
+  MacroRecipe,
+  MacroRunResult,
+  MacroStep,
+  PageSelector,
+} from './types';
+import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
+
+export async function executeMacroRecipe(
+  ctx: MacroExecutionContext,
+  recipe: MacroRecipe,
+): Promise<MacroRunResult> {
+  let workingBytes = ctx.workingBytes;
+  let pageCount = ctx.pageCount;
+  let selectedPages = [...ctx.selectedPages];
+  const logs: string[] = [];
+  const outputs: Array<{ name: string; bytes: Uint8Array }> = [];
+
+  for (const step of recipe.steps) {
+    switch (step.op) {
+      case 'select_pages': {
+        selectedPages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+        logs.push(`Selected pages: ${selectedPages.join(', ') || 'none'}`);
+        break;
+      }
+
+      case 'extract_pages': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+        if (pages.length === 0) {
+          logs.push('Skipped extract_pages: no pages selected');
+          break;
+        }
+
+        const bytes = await PdfEditAdapter.extractPages(
+          workingBytes,
+          pages.map((p) => p - 1),
+        );
+        outputs.push({
+          name: step.outputName ?? `extract-${pages.join('-')}.pdf`,
+          bytes,
+        });
+        logs.push(`Extracted pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'split_pages': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+        if (pages.length === 0) {
+          logs.push('Skipped split_pages: no pages selected');
+          break;
+        }
+
+        const extracted = await PdfEditAdapter.extractPages(
+          workingBytes,
+          pages.map((p) => p - 1),
+        );
+        workingBytes = await PdfEditAdapter.removePages(
+          workingBytes,
+          pages.map((p) => p - 1),
+        );
+        pageCount = await PdfEditAdapter.countPages(workingBytes);
+        outputs.push({
+          name: step.outputName ?? `split-${pages.join('-')}.pdf`,
+          bytes: extracted,
+        });
+        selectedPages = [];
+        logs.push(`Split out pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'duplicate_pages': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+        if (pages.length === 0) {
+          logs.push('Skipped duplicate_pages: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.duplicatePages(
+          workingBytes,
+          pages.map((p) => p - 1),
+        );
+        pageCount = await PdfEditAdapter.countPages(workingBytes);
+        logs.push(`Duplicated pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'rotate_pages': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+        if (pages.length === 0) {
+          logs.push('Skipped rotate_pages: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.rotatePages(
+          workingBytes,
+          pages.map((p) => p - 1),
+          step.degrees,
+        );
+        logs.push(`Rotated pages ${pages.join(', ')} by ${step.degrees}°`);
+        break;
+      }
+
+      case 'remove_pages': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+        if (pages.length === 0) {
+          logs.push('Skipped remove_pages: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.removePages(
+          workingBytes,
+          pages.map((p) => p - 1),
+        );
+        pageCount = await PdfEditAdapter.countPages(workingBytes);
+        selectedPages = [];
+        logs.push(`Removed pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'insert_blank_page': {
+        const count = Math.max(1, step.count ?? 1);
+        for (let i = 0; i < count; i += 1) {
+          const atIndex = resolveInsertIndex(step.position, ctx.currentPage, pageCount);
+          const size = await resolveBlankPageSize(step.size, workingBytes, atIndex, pageCount);
+          workingBytes = await PdfEditAdapter.insertBlankPage(workingBytes, atIndex, size);
+          pageCount = await PdfEditAdapter.countPages(workingBytes);
+        }
+        logs.push(`Inserted ${count} blank page(s)`);
+        break;
+      }
+
+      case 'header_footer_text': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        }).filter((page) => {
+          if (step.excludeFirstPage && page === 1) return false;
+          if (step.excludeLastPage && page === pageCount) return false;
+          return true;
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped header_footer_text: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.addHeaderFooterText(workingBytes, {
+          pages: pages.map((p) => p - 1),
+          zone: step.zone,
+          text: step.text,
+          align: step.align,
+          marginX: step.marginX,
+          marginY: step.marginY,
+          fontSize: step.fontSize,
+          color: step.color ?? '#374151',
+          opacity: step.opacity ?? 0.9,
+          fileName: ctx.fileName,
+          now: ctx.now,
+          enablePageNumberToken: step.pageNumberToken ?? true,
+          enableFileNameToken: step.fileNameToken ?? false,
+          enableDateToken: step.dateToken ?? false,
+        });
+
+        logs.push(`Applied ${step.zone} text to pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'draw_text_on_pages': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped draw_text_on_pages: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.drawTextOnPages(workingBytes, {
+          pages: pages.map((p) => p - 1),
+          text: step.text,
+          x: step.x,
+          y: step.y,
+          fontSize: step.fontSize,
+          color: step.color ?? '#111827',
+          opacity: step.opacity ?? 0.95,
+          align: step.align ?? 'left',
+          fileName: ctx.fileName,
+          now: ctx.now,
+          enablePageNumberToken: step.pageNumberToken ?? true,
+          enableFileNameToken: step.fileNameToken ?? false,
+          enableDateToken: step.dateToken ?? false,
+        });
+
+        logs.push(`Drew batch text on pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      default:
+        assertNever(step);
+    }
+  }
+
+  return {
+    workingBytes,
+    pageCount,
+    selectedPages,
+    logs,
+    outputs,
+  };
+}
+
+export function resolvePageSelector(
+  selector: PageSelector,
+  pageCount: number,
+  state: { currentPage: number; selectedPages: number[] },
+): number[] {
+  switch (selector.mode) {
+    case 'all':
+      return rangeInclusive(1, pageCount);
+
+    case 'current':
+      return [clamp(state.currentPage, 1, Math.max(1, pageCount))];
+
+    case 'selected':
+      return state.selectedPages.length > 0
+        ? Array.from(new Set(state.selectedPages))
+            .filter((p) => p >= 1 && p <= pageCount)
+            .sort((a, b) => a - b)
+        : [clamp(state.currentPage, 1, Math.max(1, pageCount))];
+
+    case 'range':
+      return rangeInclusive(
+        clamp(selector.from, 1, pageCount),
+        clamp(selector.to, 1, pageCount),
+      );
+
+    case 'list':
+      return Array.from(new Set(selector.pages))
+        .filter((p) => p >= 1 && p <= pageCount)
+        .sort((a, b) => a - b);
+
+    case 'odd':
+      return rangeInclusive(1, pageCount).filter((p) => p % 2 === 1);
+
+    case 'even':
+      return rangeInclusive(1, pageCount).filter((p) => p % 2 === 0);
+  }
+}
+
+function resolveInsertIndex(
+  position: InsertPosition,
+  currentPage: number,
+  pageCount: number,
+): number {
+  switch (position.mode) {
+    case 'start':
+      return 0;
+    case 'end':
+      return pageCount;
+    case 'before':
+      return clamp(position.page - 1, 0, pageCount);
+    case 'after':
+      return clamp(position.page, 0, pageCount);
+  }
+}
+
+async function resolveBlankPageSize(
+  size: 'match-current' | 'a4' | 'letter' | { width: number; height: number },
+  workingBytes: Uint8Array,
+  atIndex: number,
+  pageCount: number,
+): Promise<{ width: number; height: number }> {
+  if (typeof size === 'object') return size;
+  if (size === 'a4') return { width: 595, height: 842 };
+  if (size === 'letter') return { width: 612, height: 792 };
+
+  const refIndex = clamp(atIndex === pageCount ? pageCount - 1 : atIndex, 0, Math.max(0, pageCount - 1));
+  return await PdfEditAdapter.getPageSize(workingBytes, refIndex);
+}
+
+function rangeInclusive(from: number, to: number): number[] {
+  const start = Math.min(from, to);
+  const end = Math.max(from, to);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled macro step: ${JSON.stringify(value)}`);
+}
+3) frontend/src/core/macro/builtins.ts
+import type { MacroRecipe } from './types';
+
+export const BUILTIN_MACROS: Record<string, MacroRecipe> = {
+  rotate_selected_90: {
+    id: 'rotate_selected_90',
+    name: 'Rotate selected pages 90°',
+    steps: [
+      { op: 'rotate_pages', selector: { mode: 'selected' }, degrees: 90 },
+    ],
+  },
+
+  extract_selected: {
+    id: 'extract_selected',
+    name: 'Extract selected pages',
+    steps: [
+      { op: 'extract_pages', selector: { mode: 'selected' }, outputName: 'extracted-pages.pdf' },
+    ],
+  },
+
+  split_selected: {
+    id: 'split_selected',
+    name: 'Split selected pages',
+    steps: [
+      { op: 'split_pages', selector: { mode: 'selected' }, outputName: 'split-pages.pdf' },
+    ],
+  },
+
+  add_page_numbers_footer: {
+    id: 'add_page_numbers_footer',
+    name: 'Add page numbers in footer',
+    steps: [
+      {
+        op: 'header_footer_text',
+        selector: { mode: 'all' },
+        zone: 'footer',
+        text: 'Page {page} of {pages}',
+        align: 'center',
+        marginX: 24,
+        marginY: 18,
+        fontSize: 10,
+        color: '#475569',
+        opacity: 0.9,
+        pageNumberToken: true,
+      },
+    ],
+  },
+
+  add_file_date_footer_selected: {
+    id: 'add_file_date_footer_selected',
+    name: 'Add file/date footer to selected pages',
+    steps: [
+      {
+        op: 'header_footer_text',
+        selector: { mode: 'selected' },
+        zone: 'footer',
+        text: '{file} | {date} | Page {page}',
+        align: 'center',
+        marginX: 24,
+        marginY: 18,
+        fontSize: 10,
+        color: '#334155',
+        opacity: 0.9,
+        pageNumberToken: true,
+        fileNameToken: true,
+        dateToken: true,
+      },
+    ],
+  },
+
+  add_filename_header_selected: {
+    id: 'add_filename_header_selected',
+    name: 'Add filename header to selected pages',
+    steps: [
+      {
+        op: 'header_footer_text',
+        selector: { mode: 'selected' },
+        zone: 'header',
+        text: '{file}',
+        align: 'left',
+        marginX: 24,
+        marginY: 18,
+        fontSize: 10,
+        color: '#334155',
+        opacity: 0.85,
+        fileNameToken: true,
+      },
+    ],
+  },
+
+  batch_text_selected: {
+    id: 'batch_text_selected',
+    name: 'Batch text on selected pages',
+    steps: [
+      {
+        op: 'draw_text_on_pages',
+        selector: { mode: 'selected' },
+        text: 'REVIEW COPY',
+        x: 36,
+        y: 36,
+        fontSize: 16,
+        color: '#b91c1c',
+        opacity: 0.9,
+        align: 'left',
+      },
+    ],
+  },
+};
+4) frontend/src/core/macro/batchRunner.ts
+import type { MacroRecipe } from './types';
+import { executeMacroRecipe } from './executor';
+import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
+import { FileAdapter } from '@/adapters/file/FileAdapter';
+
+export async function runMacroRecipeAcrossFiles(
+  recipe: MacroRecipe,
+  files: Array<{ name: string; bytes: Uint8Array }>,
+  options?: {
+    saveOutputs?: boolean;
+    suffix?: string;
+  },
+) {
+  const results: Array<{
+    inputName: string;
+    outputName: string;
+    bytes: Uint8Array;
+    logs: string[];
+  }> = [];
+
+  for (const file of files) {
+    const pageCount = await PdfEditAdapter.countPages(file.bytes);
+
+    const run = await executeMacroRecipe(
+      {
+        workingBytes: file.bytes,
+        pageCount,
+        selectedPages: [],
+        currentPage: 1,
+        fileName: file.name,
+        now: new Date(),
+      },
+      recipe,
+    );
+
+    const baseName = stripPdfExt(file.name);
+    const outputName = `${baseName}${options?.suffix ?? '-macro'}.pdf`;
+
+    if (options?.saveOutputs) {
+      await FileAdapter.savePdfBytes(run.workingBytes, outputName, null);
+
+      for (const output of run.outputs) {
+        await FileAdapter.savePdfBytes(output.bytes, `${baseName}-${output.name}`, null);
+      }
+    }
+
+    results.push({
+      inputName: file.name,
+      outputName,
+      bytes: run.workingBytes,
+      logs: run.logs,
+    });
+  }
+
+  return results;
+}
+
+function stripPdfExt(name: string): string {
+  return name.toLowerCase().endsWith('.pdf') ? name.slice(0, -4) : name;
+}
+5) frontend/src/adapters/pdf-edit/PdfEditAdapter.ts
+
+Replace this file with the version below if you have not already added these methods. It keeps the page ops and adds:
+
+addHeaderFooterText
+drawTextOnPages
+import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
+import type { PdfAnnotation } from '@/core/annotations/types';
+
+type HeaderFooterOptions = {
+  pages: number[];
+  zone: 'header' | 'footer';
+  text: string;
+  align: 'left' | 'center' | 'right';
+  marginX: number;
+  marginY: number;
+  fontSize: number;
+  color: string;
+  opacity: number;
+  fileName: string;
+  now: Date;
+  enablePageNumberToken: boolean;
+  enableFileNameToken: boolean;
+  enableDateToken: boolean;
+};
+
+type DrawTextOptions = {
+  pages: number[];
+  text: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  color: string;
+  opacity: number;
+  align: 'left' | 'center' | 'right';
+  fileName: string;
+  now: Date;
+  enablePageNumberToken: boolean;
+  enableFileNameToken: boolean;
+  enableDateToken: boolean;
+};
+
+function normalizePageIndices(pageIndices: number[]): number[] {
+  return Array.from(new Set(pageIndices)).sort((a, b) => a - b);
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace('#', '').trim();
+  const safe =
+    normalized.length === 3
+      ? normalized
+          .split('')
+          .map((char) => char + char)
+          .join('')
+      : normalized.padEnd(6, '0').slice(0, 6);
+
+  const r = parseInt(safe.slice(0, 2), 16) / 255;
+  const g = parseInt(safe.slice(2, 4), 16) / 255;
+  const b = parseInt(safe.slice(4, 6), 16) / 255;
+
+  return rgb(r, g, b);
+}
+
+function resolveTokens(
+  template: string,
+  values: {
+    page: number;
+    pages: number;
+    file: string;
+    date: string;
+    enablePageNumberToken: boolean;
+    enableFileNameToken: boolean;
+    enableDateToken: boolean;
+  },
+): string {
+  let out = template;
+
+  if (values.enablePageNumberToken) {
+    out = out.replaceAll('{page}', String(values.page));
+    out = out.replaceAll('{pages}', String(values.pages));
+  }
+
+  if (values.enableFileNameToken) {
+    out = out.replaceAll('{file}', values.file);
+  }
+
+  if (values.enableDateToken) {
+    out = out.replaceAll('{date}', values.date);
+  }
+
+  return out;
+}
+
+function drawArrowHead(
+  page: import('pdf-lib').PDFPage,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  color: ReturnType<typeof rgb>,
+  thickness: number,
+) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const headLength = Math.max(8, thickness * 4);
+
+  const leftX = x2 - headLength * Math.cos(angle - Math.PI / 6);
+  const leftY = y2 - headLength * Math.sin(angle - Math.PI / 6);
+  const rightX = x2 - headLength * Math.cos(angle + Math.PI / 6);
+  const rightY = y2 - headLength * Math.sin(angle + Math.PI / 6);
+
+  page.drawLine({
+    start: { x: x2, y: y2 },
+    end: { x: leftX, y: leftY },
+    thickness,
+    color,
+  });
+
+  page.drawLine({
+    start: { x: x2, y: y2 },
+    end: { x: rightX, y: rightY },
+    thickness,
+    color,
+  });
+}
+
+export class PdfEditAdapter {
+  static async countPages(bytes: Uint8Array): Promise<number> {
+    const pdfDoc = await PDFDocument.load(bytes);
+    return pdfDoc.getPageCount();
+  }
+
+  static async getPageSize(
+    bytes: Uint8Array,
+    pageIndex: number,
+  ): Promise<{ width: number; height: number }> {
+    const pdfDoc = await PDFDocument.load(bytes);
+    const page = pdfDoc.getPage(pageIndex);
+    return { width: page.getWidth(), height: page.getHeight() };
+  }
+
+  static async insertBlankPage(
+    baseBytes: Uint8Array,
+    atIndex: number,
+    size: { width: number; height: number },
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    pdfDoc.insertPage(Math.max(0, Math.min(atIndex, pdfDoc.getPageCount())), [
+      size.width,
+      size.height,
+    ]);
+    return await pdfDoc.save();
+  }
+
+  static async merge(baseBytes: Uint8Array, appendDocs: Uint8Array[]): Promise<Uint8Array> {
+    const out = await PDFDocument.load(baseBytes);
+
+    for (const docBytes of appendDocs) {
+      const src = await PDFDocument.load(docBytes);
+      const copied = await out.copyPages(src, src.getPageIndices());
+      copied.forEach((page) => out.addPage(page));
+    }
+
+    return await out.save();
+  }
+
+  static async insertAt(baseBytes: Uint8Array, insertBytes: Uint8Array, atIndex: number): Promise<Uint8Array> {
+    const baseDoc = await PDFDocument.load(baseBytes);
+    const insertDoc = await PDFDocument.load(insertBytes);
+    const copied = await baseDoc.copyPages(insertDoc, insertDoc.getPageIndices());
+
+    let targetIndex = Math.max(0, Math.min(atIndex, baseDoc.getPageCount()));
+    copied.forEach((page) => {
+      baseDoc.insertPage(targetIndex, page);
+      targetIndex += 1;
+    });
+
+    return await baseDoc.save();
+  }
+
+  static async extractPages(baseBytes: Uint8Array, pageIndices: number[]): Promise<Uint8Array> {
+    const srcDoc = await PDFDocument.load(baseBytes);
+    const outDoc = await PDFDocument.create();
+    const normalized = normalizePageIndices(pageIndices);
+    const copied = await outDoc.copyPages(srcDoc, normalized);
+    copied.forEach((page) => outDoc.addPage(page));
+    return await outDoc.save();
+  }
+
+  static async removePages(baseBytes: Uint8Array, pageIndices: number[]): Promise<Uint8Array> {
+    const srcDoc = await PDFDocument.load(baseBytes);
+    const toRemove = new Set(normalizePageIndices(pageIndices));
+    const keepIndices = srcDoc.getPageIndices().filter((index) => !toRemove.has(index));
+
+    if (keepIndices.length === 0) {
+      throw new Error('Cannot remove all pages from the document');
+    }
+
+    const outDoc = await PDFDocument.create();
+    const copied = await outDoc.copyPages(srcDoc, keepIndices);
+    copied.forEach((page) => outDoc.addPage(page));
+    return await outDoc.save();
+  }
+
+  static async duplicatePages(baseBytes: Uint8Array, pageIndices: number[]): Promise<Uint8Array> {
+    const srcDoc = await PDFDocument.load(baseBytes);
+    const selected = new Set(normalizePageIndices(pageIndices));
+
+    const order: number[] = [];
+    srcDoc.getPageIndices().forEach((index) => {
+      order.push(index);
+      if (selected.has(index)) order.push(index);
+    });
+
+    const outDoc = await PDFDocument.create();
+    const copied = await outDoc.copyPages(srcDoc, order);
+    copied.forEach((page) => outDoc.addPage(page));
+    return await outDoc.save();
+  }
+
+  static async rotatePages(
+    baseBytes: Uint8Array,
+    pageIndices: number[],
+    deltaDegrees = 90,
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const selected = new Set(normalizePageIndices(pageIndices));
+
+    pdfDoc.getPages().forEach((page, index) => {
+      if (!selected.has(index)) return;
+      const nextRotation = (page.getRotation().angle + deltaDegrees + 360) % 360;
+      page.setRotation(degrees(nextRotation));
+    });
+
+    return await pdfDoc.save();
+  }
+
+  static async addHeaderFooterText(
+    baseBytes: Uint8Array,
+    options: HeaderFooterOptions,
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const totalPages = pdfDoc.getPageCount();
+
+    for (const pageIndex of options.pages) {
+      const page = pdfDoc.getPage(pageIndex);
+      const width = page.getWidth();
+      const height = page.getHeight();
+
+      const text = resolveTokens(options.text, {
+        page: pageIndex + 1,
+        pages: totalPages,
+        file: options.fileName,
+        date: options.now.toLocaleDateString(),
+        enablePageNumberToken: options.enablePageNumberToken,
+        enableFileNameToken: options.enableFileNameToken,
+        enableDateToken: options.enableDateToken,
+      });
+
+      const textWidth = font.widthOfTextAtSize(text, options.fontSize);
+
+      const x =
+        options.align === 'left'
+          ? options.marginX
+          : options.align === 'center'
+          ? (width - textWidth) / 2
+          : width - options.marginX - textWidth;
+
+      const y =
+        options.zone === 'header'
+          ? height - options.marginY - options.fontSize
+          : options.marginY;
+
+      page.drawText(text, {
+        x,
+        y,
+        font,
+        size: options.fontSize,
+        color: hexToRgb(options.color),
+        opacity: options.opacity,
+      });
+    }
+
+    return await pdfDoc.save();
+  }
+
+  static async drawTextOnPages(
+    baseBytes: Uint8Array,
+    options: DrawTextOptions,
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const totalPages = pdfDoc.getPageCount();
+
+    for (const pageIndex of options.pages) {
+      const page = pdfDoc.getPage(pageIndex);
+      const width = page.getWidth();
+
+      const text = resolveTokens(options.text, {
+        page: pageIndex + 1,
+        pages: totalPages,
+        file: options.fileName,
+        date: options.now.toLocaleDateString(),
+        enablePageNumberToken: options.enablePageNumberToken,
+        enableFileNameToken: options.enableFileNameToken,
+        enableDateToken: options.enableDateToken,
+      });
+
+      const textWidth = font.widthOfTextAtSize(text, options.fontSize);
+
+      const x =
+        options.align === 'left'
+          ? options.x
+          : options.align === 'center'
+          ? (width - textWidth) / 2
+          : width - options.x - textWidth;
+
+      page.drawText(text, {
+        x,
+        y: options.y,
+        font,
+        size: options.fontSize,
+        color: hexToRgb(options.color),
+        opacity: options.opacity,
+      });
+    }
+
+    return await pdfDoc.save();
+  }
+
+  static async exportWithAnnotations(baseBytes: Uint8Array, annotations: PdfAnnotation[]): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    for (const annotation of annotations) {
+      if (annotation.pageNumber < 1 || annotation.pageNumber > pdfDoc.getPageCount()) continue;
+
+      const page = pdfDoc.getPage(annotation.pageNumber - 1);
+
+      if (annotation.type === 'highlight') {
+        const fill = annotation.style?.fill ?? '#fde047';
+        const opacity = annotation.style?.opacity ?? 0.35;
+        annotation.quads.forEach((quad) => {
+          page.drawRectangle({
+            x: quad.x,
+            y: page.getHeight() - quad.y - quad.height,
+            width: quad.width,
+            height: quad.height,
+            color: hexToRgb(fill),
+            opacity,
+            borderWidth: 0,
+          });
+        });
+        continue;
+      }
+
+      if (annotation.type === 'underline' || annotation.type === 'strikeout') {
+        const stroke = annotation.style?.stroke ?? (annotation.type === 'underline' ? '#2563eb' : '#dc2626');
+        const thickness = annotation.style?.strokeWidth ?? 2;
+
+        annotation.quads.forEach((quad) => {
+          const y =
+            annotation.type === 'underline'
+              ? page.getHeight() - (quad.y + quad.height - 2)
+              : page.getHeight() - (quad.y + quad.height * 0.5);
+
+          page.drawLine({
+            start: { x: quad.x, y },
+            end: { x: quad.x + quad.width, y },
+            thickness,
+            color: hexToRgb(stroke),
+          });
+        });
+        continue;
+      }
+
+      if (annotation.type === 'sticky-note') {
+        page.drawCircle({
+          x: annotation.anchor.x,
+          y: page.getHeight() - annotation.anchor.y,
+          size: 6,
+          color: hexToRgb(annotation.style?.fill ?? '#facc15'),
+          borderColor: hexToRgb(annotation.style?.stroke ?? '#a16207'),
+          borderWidth: 1,
+        });
+        continue;
+      }
+
+      if (annotation.type === 'shape') {
+        page.drawRectangle({
+          x: annotation.rect.x,
+          y: page.getHeight() - annotation.rect.y - annotation.rect.height,
+          width: annotation.rect.width,
+          height: annotation.rect.height,
+          borderWidth: annotation.style?.strokeWidth ?? 1,
+          borderColor: hexToRgb(annotation.style?.stroke ?? '#3b82f6'),
+        });
+        continue;
+      }
+
+      if (annotation.type === 'line' || annotation.type === 'arrow') {
+        const stroke = hexToRgb(annotation.style?.stroke ?? '#111827');
+        const thickness = annotation.style?.strokeWidth ?? 2;
+
+        const x1 = annotation.start.x;
+        const y1 = page.getHeight() - annotation.start.y;
+        const x2 = annotation.end.x;
+        const y2 = page.getHeight() - annotation.end.y;
+
+        page.drawLine({
+          start: { x: x1, y: y1 },
+          end: { x: x2, y: y2 },
+          thickness,
+          color: stroke,
+        });
+
+        if (annotation.type === 'arrow') {
+          drawArrowHead(page, x1, y1, x2, y2, stroke, thickness);
+        }
+        continue;
+      }
+
+      if (
+        annotation.type === 'textbox' ||
+        annotation.type === 'callout' ||
+        annotation.type === 'stamp'
+      ) {
+        const x = annotation.rect.x;
+        const y = page.getHeight() - annotation.rect.y - annotation.rect.height;
+        const fill = annotation.style?.fill ?? (annotation.type === 'stamp' ? '#fef2f2' : '#ffffff');
+        const stroke = annotation.style?.stroke ?? (annotation.type === 'stamp' ? '#ef4444' : '#475569');
+        const textColor = annotation.style?.textColor ?? (annotation.type === 'stamp' ? '#b91c1c' : '#111827');
+
+        if (annotation.type === 'callout') {
+          page.drawLine({
+            start: { x: annotation.anchor.x, y: page.getHeight() - annotation.anchor.y },
+            end: { x, y: y + annotation.rect.height / 2 },
+            thickness: 2,
+            color: hexToRgb(stroke),
+          });
+        }
+
+        page.drawRectangle({
+          x,
+          y,
+          width: annotation.rect.width,
+          height: annotation.rect.height,
+          color: hexToRgb(fill),
+          opacity: annotation.style?.opacity ?? 0.85,
+          borderWidth: annotation.style?.strokeWidth ?? 1,
+          borderColor: hexToRgb(stroke),
+        });
+
+        page.drawText(annotation.text, {
+          x: x + 6,
+          y: y + Math.max(8, annotation.rect.height - 18),
+          font: helvetica,
+          size: annotation.style?.fontSize ?? 12,
+          color: hexToRgb(textColor),
+          maxWidth: Math.max(20, annotation.rect.width - 12),
+        });
+      }
+    }
+
+    return await pdfDoc.save();
+  }
+}
+6) frontend/src/components/toolbar/ToolbarOrganize.tsx
+import React from 'react';
+import {
+  RotateCw,
+  Scissors,
+  SplitSquareVertical,
+  Hash,
+  Heading,
+  Pilcrow,
+  Files,
+} from 'lucide-react';
+import { Button } from '@/components/ui/Button';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { useSessionStore } from '@/core/session/store';
+import { BUILTIN_MACROS } from '@/core/macro/builtins';
+import { executeMacroRecipe } from '@/core/macro/executor';
+import { runMacroRecipeAcrossFiles } from '@/core/macro/batchRunner';
+import { FileAdapter } from '@/adapters/file/FileAdapter';
+
+export const ToolbarOrganize: React.FC = () => {
+  const session = useSessionStore();
+
+  const runOnSession = async (recipe: typeof BUILTIN_MACROS[keyof typeof BUILTIN_MACROS]) => {
+    if (!session.workingBytes || !session.fileName) return;
+
+    const result = await executeMacroRecipe(
+      {
+        workingBytes: session.workingBytes,
+        pageCount: session.pageCount,
+        selectedPages: session.selectedPages,
+        currentPage: session.viewState.currentPage,
+        fileName: session.fileName,
+        now: new Date(),
+      },
+      recipe,
+    );
+
+    session.replaceWorkingCopy(result.workingBytes, result.pageCount);
+    session.setSelectedPages(result.selectedPages);
+
+    for (const output of result.outputs) {
+      await FileAdapter.savePdfBytes(output.bytes, output.name, null);
+    }
+  };
+
+  const handleBatchRun = async () => {
+    const files = await FileAdapter.pickPdfFiles(true);
+    if (!files.length) return;
+
+    const selected = window.prompt(
+      'Batch recipe: pageNumbers | footer | header | batchText',
+      'pageNumbers',
+    )?.trim();
+
+    let recipe = BUILTIN_MACROS.add_page_numbers_footer;
+
+    if (selected === 'footer') recipe = BUILTIN_MACROS.add_file_date_footer_selected;
+    if (selected === 'header') recipe = BUILTIN_MACROS.add_filename_header_selected;
+    if (selected === 'batchText') {
+      const text = window.prompt('Batch text', 'REVIEW COPY') ?? 'REVIEW COPY';
+      recipe = {
+        ...BUILTIN_MACROS.batch_text_selected,
+        steps: [
+          {
+            op: 'draw_text_on_pages',
+            selector: { mode: 'all' },
+            text,
+            x: 36,
+            y: 36,
+            fontSize: 16,
+            color: '#b91c1c',
+            opacity: 0.9,
+            align: 'left',
+          },
+        ],
+      };
+    }
+
+    await runMacroRecipeAcrossFiles(
+      recipe,
+      files.map((file) => ({ name: file.name, bytes: file.bytes })),
+      { saveOutputs: true, suffix: '-processed' },
+    );
+  };
+
+  return (
+    <div className="flex items-center space-x-1 border-r border-slate-200 dark:border-slate-800 pr-2 mr-2">
+      <Tooltip content="Rotate selected pages 90°">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => runOnSession(BUILTIN_MACROS.rotate_selected_90)}>
+          <RotateCw className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Extract selected pages">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => runOnSession(BUILTIN_MACROS.extract_selected)}>
+          <Scissors className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Split selected pages">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => runOnSession(BUILTIN_MACROS.split_selected)}>
+          <SplitSquareVertical className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Add page numbers">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => runOnSession(BUILTIN_MACROS.add_page_numbers_footer)}>
+          <Hash className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Add header to selected pages">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => runOnSession(BUILTIN_MACROS.add_filename_header_selected)}>
+          <Heading className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Add footer to selected pages">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => runOnSession(BUILTIN_MACROS.add_file_date_footer_selected)}>
+          <Pilcrow className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Run same recipe on several files">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleBatchRun}>
+          <Files className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+    </div>
+  );
+};
+7) frontend/src/components/sidebar/SidebarPanel.tsx
+
+Replace the thumbnails section with this version. It adds:
+
+right-click context menu on thumbnails
+rotate/extract/split on selected or current page
+add page numbers
+add header/footer to selected/current pages
+import React from 'react';
+import { Layers, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
+import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
+import { PdfRendererAdapter } from '@/adapters/pdf-renderer/PdfRendererAdapter';
+import { useEditorStore } from '@/core/editor/store';
+import { useSessionStore } from '@/core/session/store';
+import { BUILTIN_MACROS } from '@/core/macro/builtins';
+import { executeMacroRecipe } from '@/core/macro/executor';
+import { FileAdapter } from '@/adapters/file/FileAdapter';
+
+interface ThumbItem {
+  pageNumber: number;
+  imageUrl: string;
+}
+
+type ContextMenuState = {
+  x: number;
+  y: number;
+  pageNumber: number;
+} | null;
+
+export const SidebarPanel: React.FC = () => {
+  const { sidebarTab, leftPanelWidth, setLeftPanelWidth } = useEditorStore();
+  const [previousWidth, setPreviousWidth] = React.useState(20);
+
+  const isCollapsed = leftPanelWidth < 5;
+
+  const toggleCollapse = () => {
+    if (isCollapsed) {
+      setLeftPanelWidth(previousWidth < 10 ? 20 : previousWidth);
+    } else {
+      setPreviousWidth(leftPanelWidth);
+      setLeftPanelWidth(0);
+    }
+  };
+
+  if (isCollapsed) {
+    return (
+      <div className="absolute top-4 left-4 z-10" style={{ transform: 'translateX(3rem)' }}>
+        <Button variant="secondary" size="icon" onClick={toggleCollapse} className="shadow-md rounded-full h-8 w-8">
+          <ChevronRight className="w-4 h-4" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-800 shrink-0">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+          {sidebarTab === 'thumbnails' ? 'Pages' : sidebarTab}
+        </h2>
+        <Button variant="ghost" size="icon" className="h-6 w-6 -mr-2" onClick={toggleCollapse}>
+          <ChevronLeft className="w-4 h-4" />
+        </Button>
+      </div>
+
+      <div className="flex-1 overflow-auto relative">
+        {sidebarTab === 'thumbnails' ? (
+          <ThumbnailSidebar />
+        ) : (
+          <FeaturePlaceholder
+            name="Sidebar"
+            description="Use the thumbnails panel for page tools and macro quick actions."
+            icon={<Layers />}
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ThumbnailSidebar: React.FC = () => {
+  const session = useSessionStore();
+  const [thumbs, setThumbs] = React.useState<ThumbItem[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [contextMenu, setContextMenu] = React.useState<ContextMenuState>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      if (!session.workingBytes) {
+        setThumbs([]);
+        return;
+      }
+
+      setLoading(true);
+      const doc = await PdfRendererAdapter.loadDocument(session.workingBytes);
+
+      try {
+        const nextThumbs: ThumbItem[] = [];
+        for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
+          const page = await doc.getPage(pageNumber);
+          const imageUrl = await PdfRendererAdapter.getThumbnail(page);
+          nextThumbs.push({ pageNumber, imageUrl });
+        }
+        if (!cancelled) setThumbs(nextThumbs);
+      } finally {
+        if (!cancelled) setLoading(false);
+        await doc.destroy();
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [session.workingBytes]);
+
+  React.useEffect(() => {
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, []);
+
+  const handleSelect = (event: React.MouseEvent<HTMLDivElement>, pageNumber: number) => {
+    if (event.metaKey || event.ctrlKey) {
+      session.toggleSelectedPage(pageNumber);
+    } else {
+      session.setSelectedPages([pageNumber]);
+      session.setPage(pageNumber);
+    }
+  };
+
+  const runRecipe = async (recipe: typeof BUILTIN_MACROS[keyof typeof BUILTIN_MACROS], fallbackPage?: number) => {
+    if (!session.workingBytes || !session.fileName) return;
+
+    const selectedPages =
+      session.selectedPages.length > 0
+        ? session.selectedPages
+        : fallbackPage
+        ? [fallbackPage]
+        : [session.viewState.currentPage];
+
+    const result = await executeMacroRecipe(
+      {
+        workingBytes: session.workingBytes,
+        pageCount: session.pageCount,
+        selectedPages,
+        currentPage: fallbackPage ?? session.viewState.currentPage,
+        fileName: session.fileName,
+        now: new Date(),
+      },
+      recipe,
+    );
+
+    session.replaceWorkingCopy(result.workingBytes, result.pageCount);
+    session.setSelectedPages(result.selectedPages);
+
+    for (const output of result.outputs) {
+      await FileAdapter.savePdfBytes(output.bytes, output.name, null);
+    }
+
+    setContextMenu(null);
+  };
+
+  if (!session.workingBytes) {
+    return (
+      <FeaturePlaceholder
+        name="Pages"
+        description="Open a PDF to generate thumbnails and use page tools."
+        icon={<Layers />}
+      />
+    );
+  }
+
+  return (
+    <div className="p-3 space-y-3 relative">
+      <div className="text-xs text-slate-500 dark:text-slate-400">
+        Ctrl/Cmd-click to multi-select pages. Right-click a thumbnail for quick tools.
+      </div>
+
+      {loading && <div className="text-sm text-slate-500">Generating thumbnails…</div>}
+
+      {thumbs.map((thumb) => {
+        const active = thumb.pageNumber === session.viewState.currentPage;
+        const selected = session.selectedPages.includes(thumb.pageNumber);
+
+        return (
+          <div
+            key={thumb.pageNumber}
+            onClick={(event) => handleSelect(event, thumb.pageNumber)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              if (!session.selectedPages.includes(thumb.pageNumber)) {
+                session.setSelectedPages([thumb.pageNumber]);
+                session.setPage(thumb.pageNumber);
+              }
+              setContextMenu({
+                x: event.clientX,
+                y: event.clientY,
+                pageNumber: thumb.pageNumber,
+              });
+            }}
+            className={`group rounded-lg border p-2 cursor-pointer transition-colors ${
+              selected
+                ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/30'
+                : active
+                ? 'border-slate-400 bg-slate-50 dark:bg-slate-900'
+                : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                Page {thumb.pageNumber}
+              </span>
+              {selected ? (
+                <span className="text-[10px] px-2 py-0.5 rounded bg-blue-600 text-white">Selected</span>
+              ) : active ? (
+                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-white">Current</span>
+              ) : null}
+            </div>
+
+            <div className="bg-white dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <img
+                src={thumb.imageUrl}
+                alt={`Thumbnail for page ${thumb.pageNumber}`}
+                className="block w-full h-auto"
+                loading="lazy"
+              />
+            </div>
+          </div>
+        );
+      })}
+
+      {contextMenu && (
+        <div
+          className="fixed z-50 min-w-[220px] rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-xl p-1"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button className={menuItemClass} onClick={() => runRecipe(BUILTIN_MACROS.rotate_selected_90, contextMenu.pageNumber)}>
+            Rotate selected/current pages
+          </button>
+          <button className={menuItemClass} onClick={() => runRecipe(BUILTIN_MACROS.extract_selected, contextMenu.pageNumber)}>
+            Extract selected/current pages
+          </button>
+          <button className={menuItemClass} onClick={() => runRecipe(BUILTIN_MACROS.split_selected, contextMenu.pageNumber)}>
+            Split selected/current pages
+          </button>
+
+          <div className="my-1 h-px bg-slate-200 dark:bg-slate-800" />
+
+          <button className={menuItemClass} onClick={() => runRecipe(BUILTIN_MACROS.add_page_numbers_footer, contextMenu.pageNumber)}>
+            Add page numbers
+          </button>
+          <button className={menuItemClass} onClick={() => runRecipe(BUILTIN_MACROS.add_filename_header_selected, contextMenu.pageNumber)}>
+            Add header to selected/current pages
+          </button>
+          <button className={menuItemClass} onClick={() => runRecipe(BUILTIN_MACROS.add_file_date_footer_selected, contextMenu.pageNumber)}>
+            Add footer to selected/current pages
+          </button>
+          <button
+            className={menuItemClass}
+            onClick={async () => {
+              const text = window.prompt('Batch text', 'REVIEW COPY');
+              if (!text) return;
+
+              await runRecipe(
+                {
+                  id: 'custom-batch-text',
+                  name: 'Custom batch text',
+                  steps: [
+                    {
+                      op: 'draw_text_on_pages',
+                      selector: { mode: 'selected' },
+                      text,
+                      x: 36,
+                      y: 36,
+                      fontSize: 16,
+                      color: '#b91c1c',
+                      opacity: 0.9,
+                      align: 'left',
+                    },
+                  ],
+                },
+                contextMenu.pageNumber,
+              );
+            }}
+          >
+            Batch text on selected/current pages
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const menuItemClass =
+  'w-full text-left px-3 py-2 text-sm rounded hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-800 dark:text-slate-100';
+What this bundle gives you now
+
