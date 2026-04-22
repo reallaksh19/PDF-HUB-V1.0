@@ -646,21 +646,26 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
     window.addEventListener('mouseup', onUp);
   };
 
-  const handleTextSelectionMouseUp = () => {
-    if (activeTool !== 'select' || !pageRef.current) return;
+  const handleTextSelectionMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!pageRef.current) return;
+
 
     const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
+    if (!selection || selection.rangeCount === 0 || selection.toString().trim() === '') {
       setTextSelectionDraft(null);
+      // Handle plain click on text layer to place note tool
+      if (isNoteTool(activeTool) && pageRef.current) {
+        const hostRect = pageRef.current.getBoundingClientRect();
+        const x = (event.clientX - hostRect.left) / scale;
+        const y = (event.clientY - hostRect.top) / scale;
+        onCreateAnnotation(buildAnnotation(activeTool as AnnotationType, pageNumber, x, y));
+        useEditorStore.getState().setActiveTool('select');
+      }
       return;
     }
+
 
     const text = selection.toString().trim();
-    if (!text) {
-      setTextSelectionDraft(null);
-      return;
-    }
-
     const pageRect = pageRef.current.getBoundingClientRect();
     const range = selection.getRangeAt(0);
     const rects = Array.from(range.getClientRects())
@@ -707,7 +712,13 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
   }, [marquee]);
 
   const startMarquee = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (activeTool !== 'select') return;
+    if (activeTool !== 'select') {
+      if (isTextMarkTool(activeTool) || isNoteTool(activeTool)) {
+        onClearSelection();
+        clearTextSelectionDraft();
+      }
+      return;
+    }
     if (event.target !== event.currentTarget) return;
 
     clearTextSelectionDraft();
