@@ -8,14 +8,45 @@ export interface ViewState {
   viewMode: ViewMode;
 }
 
+export interface SaveDocumentAction {
+  type: 'SAVE_WORKING_DOCUMENT';
+}
+
+export interface ExportReviewAction {
+  type: 'EXPORT_REVIEW_SNAPSHOT';
+}
+
+export interface DownloadPdfAction {
+  type: 'DOWNLOAD_PROCESSED_PDF';
+}
+
+export interface SaveSessionSnapshotAction {
+  type: 'SAVE_SESSION_SNAPSHOT';
+}
+
+export type SessionSaveExportAction =
+  | SaveDocumentAction
+  | ExportReviewAction
+  | DownloadPdfAction
+  | SaveSessionSnapshotAction;
+
 export interface DocumentSession {
   documentKey: string | null;
   fileName: string | null;
   originalBytes: Uint8Array | null;
   workingBytes: Uint8Array | null;
   pageCount: number;
+
+  // explicit dirty flags
+  isDocumentDirty: boolean;
+  isReviewDirty: boolean;
+  isSessionDirty: boolean;
+  // keep legacy isDirty around for backward compatibility until refactored out
   isDirty: boolean;
+
   saveHandle: FileSystemFileHandle | null;
   selectedPages: number[];
   viewState: ViewState;
+
+  lastExportAction?: SessionSaveExportAction;
 }

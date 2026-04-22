@@ -17,6 +17,10 @@ export interface SessionActions {
   setFitMode: (fitMode: FitMode) => void;
   setViewMode: (viewMode: ViewMode) => void;
   setDirty: (isDirty: boolean) => void;
+  setDocumentDirty: (isDirty: boolean) => void;
+  setReviewDirty: (isDirty: boolean) => void;
+  setSessionDirty: (isDirty: boolean) => void;
+  recordSaveExportAction: (action: import('./types').SessionSaveExportAction) => void;
   setSaveHandle: (saveHandle: FileSystemFileHandle | null) => void;
   setSelectedPages: (pages: number[]) => void;
   toggleSelectedPage: (page: number) => void;
@@ -35,6 +39,9 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
   workingBytes: null,
   pageCount: 0,
   isDirty: false,
+  isDocumentDirty: false,
+  isReviewDirty: false,
+  isSessionDirty: false,
   saveHandle: null,
   selectedPages: [],
   viewState: {
@@ -52,6 +59,9 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       workingBytes: new Uint8Array(bytes),
       pageCount,
       isDirty: false,
+      isDocumentDirty: false,
+      isReviewDirty: false,
+      isSessionDirty: false,
       saveHandle,
       selectedPages: [],
       viewState: {
@@ -67,6 +77,7 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       workingBytes: new Uint8Array(bytes),
       pageCount,
       isDirty: true,
+      isDocumentDirty: true,
       selectedPages: state.selectedPages.filter((page) => page >= 1 && page <= pageCount),
       viewState: {
         ...state.viewState,
@@ -107,7 +118,11 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       },
     })),
 
-  setDirty: (isDirty) => set({ isDirty }),
+  setDirty: (isDirty) => set({ isDirty, isDocumentDirty: isDirty, isSessionDirty: isDirty }),
+  setDocumentDirty: (isDocumentDirty) => set({ isDocumentDirty }),
+  setReviewDirty: (isReviewDirty) => set({ isReviewDirty }),
+  setSessionDirty: (isSessionDirty) => set({ isSessionDirty }),
+  recordSaveExportAction: (action) => set({ lastExportAction: action }),
   setSaveHandle: (saveHandle) => set({ saveHandle }),
 
   setSelectedPages: (pages) =>
@@ -137,8 +152,12 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       workingBytes: null,
       pageCount: 0,
       isDirty: false,
+      isDocumentDirty: false,
+      isReviewDirty: false,
+      isSessionDirty: false,
       saveHandle: null,
       selectedPages: [],
+      lastExportAction: undefined,
       viewState: {
         currentPage: 1,
         zoom: 100,

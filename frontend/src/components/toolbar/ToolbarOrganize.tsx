@@ -15,6 +15,9 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 import { useSessionStore } from '@/core/session/store';
+import { dispatchCommand } from '@/core/commands/dispatch';
+import { useHistoryStore } from '@/core/document-history/store';
+import { Undo, Redo } from 'lucide-react';
 
 export const ToolbarOrganize: React.FC = () => {
   const {
@@ -22,17 +25,16 @@ export const ToolbarOrganize: React.FC = () => {
     pageCount,
     selectedPages,
     viewState,
-    replaceWorkingCopy,
     setPage,
     clearSelectedPages,
   } = useSessionStore();
 
+  const historyStore = useHistoryStore();
+
   const activePages = selectedPages.length > 0 ? selectedPages : [viewState.currentPage];
   const activeIndices = activePages.map((page) => page - 1);
 
-  const applyNewBytes = async (bytes: Uint8Array, nextPage?: number) => {
-    const nextCount = await PdfEditAdapter.countPages(bytes);
-    replaceWorkingCopy(bytes, nextCount);
+  const applyPostCommand = (nextPage?: number) => {
     clearSelectedPages();
     if (nextPage) {
       setPage(nextPage);
@@ -40,131 +42,142 @@ export const ToolbarOrganize: React.FC = () => {
   };
 
   const handleMerge = async () => {
-    if (!workingBytes) {
-      return;
-    }
+    if (!workingBytes) return;
     const files = await FileAdapter.pickPdfFiles(true);
-    if (!files.length) {
-      return;
-    }
-    const merged = await PdfEditAdapter.merge(workingBytes, files.map((file) => file.bytes));
-    await applyNewBytes(merged);
+    if (!files.length) return;
+
+    const result = await dispatchCommand({
+      source: 'toolbar',
+      workingBytes,
+      command: {
+        type: 'MERGE_PDF',
+        additionalBytes: files.map(f => f.bytes)
+      }
+    });
+    if (result.success) applyPostCommand();
   };
 
   const handleExtract = async () => {
-    if (!workingBytes || activeIndices.length === 0) {
-      return;
-    }
+    if (!workingBytes || activeIndices.length === 0) return;
     const extracted = await PdfEditAdapter.extractPages(workingBytes, activeIndices);
     const name = `extract-pages-${activePages.join('-')}.pdf`;
     await FileAdapter.savePdfBytes(extracted, name, null);
+
+    await dispatchCommand({
+      source: 'toolbar',
+      workingBytes,
+      command: { type: 'EXTRACT_PAGES', pageIndices: activeIndices }
+    });
   };
 
   const handleInsertFromPdf = async () => {
-    if (!workingBytes) {
-      return;
-    }
-
+    if (!workingBytes) return;
     const [picked] = await FileAdapter.pickPdfFiles(false);
-    if (!picked) {
-      return;
-    }
+    if (!picked) return;
 
-    const inserted = await PdfEditAdapter.insertAt(
+    const result = await dispatchCommand({
+      source: 'toolbar',
       workingBytes,
-      picked.bytes,
-      viewState.currentPage - 1,
-    );
-    await applyNewBytes(inserted, viewState.currentPage);
+      command: {
+        type: 'INSERT_PAGES',
+        atIndex: viewState.currentPage - 1,
+        newBytes: picked.bytes
+      }
+    });
+    if (result.success) applyPostCommand(viewState.currentPage);
   };
 
   const handleDeletePages = async () => {
-    if (!workingBytes || activeIndices.length === 0) {
-      return;
-    }
-    if (activeIndices.length >= pageCount) {
-      return;
-    }
-    const next = await PdfEditAdapter.removePages(workingBytes, activeIndices);
-    await applyNewBytes(next, 1);
+    if (!workingBytes || activeIndices.length === 0 || activeIndices.length >= pageCount) return;
+    const result = await dispatchCommand({
+      source: 'toolbar',
+      workingBytes,
+      command: { type: 'DELETE_PAGES', pageIndices: activeIndices }
+    });
+    if (result.success) applyPostCommand(1);
   };
 
   const handleSplitOut = async () => {
-    if (!workingBytes || activeIndices.length === 0) {
-      return;
-    }
+    if (!workingBytes || activeIndices.length === 0) return;
     const extracted = await PdfEditAdapter.extractPages(workingBytes, activeIndices);
-    const remaining = await PdfEditAdapter.removePages(workingBytes, activeIndices);
     const name = `split-pages-${activePages.join('-')}.pdf`;
     await FileAdapter.savePdfBytes(extracted, name, null);
-    await applyNewBytes(remaining, 1);
+
+    const result = await dispatchCommand({
+      source: 'toolbar',
+      workingBytes,
+      command: { type: 'SPLIT_PAGES', pageIndices: activeIndices }
+    });
+    if (result.success) applyPostCommand(1);
   };
 
   const handleDuplicatePages = async () => {
-    if (!workingBytes || activeIndices.length === 0) {
-      return;
-    }
-    const next = await PdfEditAdapter.duplicatePages(workingBytes, activeIndices);
-    await applyNewBytes(next, viewState.currentPage);
+    if (!workingBytes || activeIndices.length === 0) return;
+    const result = await dispatchCommand({
+      source: 'toolbar',
+      workingBytes,
+      command: { type: 'DUPLICATE_PAGES', pageIndices: activeIndices }
+    });
+    if (result.success) applyPostCommand(viewState.currentPage);
   };
 
   const handleRotatePages = async () => {
-    if (!workingBytes || activeIndices.length === 0) {
-      return;
-    }
-    const next = await PdfEditAdapter.rotatePages(workingBytes, activeIndices, 90);
-    await applyNewBytes(next, viewState.currentPage);
+    if (!workingBytes || activeIndices.length === 0) return;
+    const result = await dispatchCommand({
+      source: 'toolbar',
+      workingBytes,
+      command: { type: 'ROTATE_PAGES', pageIndices: activeIndices, angle: 90 }
+    });
+    if (result.success) applyPostCommand(viewState.currentPage);
   };
 
   const handleInsertBlankPage = async () => {
-    if (!workingBytes) {
-      return;
-    }
-
-    const preset = (window.prompt('Blank page size: match / a4 / letter', 'match') || 'match')
-      .trim()
-      .toLowerCase();
+    if (!workingBytes) return;
+    const preset = (window.prompt('Blank page size: match / a4 / letter', 'match') || 'match').trim().toLowerCase();
 
     let size = { width: 595, height: 842 };
-    if (preset === 'letter') {
-      size = { width: 612, height: 792 };
-    }
-    if (preset === 'match') {
-      size = await PdfEditAdapter.getPageSize(workingBytes, viewState.currentPage - 1);
-    }
+    if (preset === 'letter') size = { width: 612, height: 792 };
+    if (preset === 'match') size = await PdfEditAdapter.getPageSize(workingBytes, viewState.currentPage - 1);
 
-    const where = (window.prompt('Insert blank page before or after current? before / after', 'after') || 'after')
-      .trim()
-      .toLowerCase();
-
+    const where = (window.prompt('Insert blank page before or after current? before / after', 'after') || 'after').trim().toLowerCase();
     const atIndex = where === 'before' ? viewState.currentPage - 1 : viewState.currentPage;
-    const next = await PdfEditAdapter.insertBlankPage(workingBytes, atIndex, size);
-    await applyNewBytes(next, atIndex + 1);
+
+    const result = await dispatchCommand({
+      source: 'toolbar',
+      workingBytes,
+      command: { type: 'INSERT_BLANK_PAGE', atIndex, size }
+    });
+    if (result.success) applyPostCommand(atIndex + 1);
   };
 
   const handleReplacePage = async () => {
-    if (!workingBytes) {
-      return;
-    }
+    if (!workingBytes) return;
     const [donor] = await FileAdapter.pickPdfFiles(false);
-    if (!donor) {
-      return;
-    }
+    if (!donor) return;
 
     const donorCount = await PdfEditAdapter.countPages(donor.bytes);
-    const donorPage = Number(
-      window.prompt(`Donor page number (1-${donorCount})`, '1') || '1',
-    );
-
+    const donorPage = Number(window.prompt(`Donor page number (1-${donorCount})`, '1') || '1');
     const safeDonorPage = Math.max(1, Math.min(donorCount, donorPage));
-    const next = await PdfEditAdapter.replacePage(
-      workingBytes,
-      viewState.currentPage - 1,
-      donor.bytes,
-      safeDonorPage - 1,
-    );
 
-    await applyNewBytes(next, viewState.currentPage);
+    const result = await dispatchCommand({
+      source: 'toolbar',
+      workingBytes,
+      command: {
+        type: 'REPLACE_PAGE',
+        atIndex: viewState.currentPage - 1,
+        donorBytes: donor.bytes,
+        donorPageIndex: safeDonorPage - 1
+      }
+    });
+    if (result.success) applyPostCommand(viewState.currentPage);
+  };
+
+  const handleUndo = () => {
+    import('@/core/document-history/transactions').then(({ applyUndo }) => applyUndo());
+  };
+
+  const handleRedo = () => {
+    import('@/core/document-history/transactions').then(({ applyRedo }) => applyRedo());
   };
 
   return (
@@ -226,6 +239,20 @@ export const ToolbarOrganize: React.FC = () => {
       <Tooltip content="Split selected pages into a new PDF and remove them here">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleSplitOut} disabled={!workingBytes}>
           <Split className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
+
+      <Tooltip content="Undo">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleUndo} disabled={!historyStore.canUndo()}>
+          <Undo className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Redo">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleRedo} disabled={!historyStore.canRedo()}>
+          <Redo className="w-4 h-4" />
         </Button>
       </Tooltip>
     </div>

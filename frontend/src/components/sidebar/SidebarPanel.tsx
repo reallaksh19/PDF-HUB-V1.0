@@ -6,7 +6,6 @@ import { useSessionStore } from '@/core/session/store';
 import { loadAppBookmarks, saveAppBookmarks } from '@/core/bookmarks/persistence';
 import type { AppBookmark } from '@/core/bookmarks/types';
 import { PdfRendererAdapter } from '@/adapters/pdf-renderer/PdfRendererAdapter';
-import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
 import { MacrosSidebar } from '@/components/sidebar/MacrosSidebar';
 import {
@@ -108,7 +107,6 @@ const ThumbnailSidebar: React.FC = () => {
     workingBytes,
     viewState,
     setPage,
-    replaceWorkingCopy,
     selectedPages,
     setSelectedPages,
     toggleSelectedPage,
@@ -153,12 +151,23 @@ const ThumbnailSidebar: React.FC = () => {
 
   const handleDrop = async (targetPage: number) => {
     if (!workingBytes || dragPage === null || dragPage === targetPage) return;
-    const nextBytes = await PdfEditAdapter.movePage(workingBytes, dragPage - 1, targetPage - 1);
-    const nextCount = await PdfEditAdapter.countPages(nextBytes);
-    replaceWorkingCopy(nextBytes, nextCount);
-    setPage(targetPage);
-    setSelectedPages([]);
-    setDragPage(null);
+
+    import('@/core/commands/dispatch').then(async ({ dispatchCommand }) => {
+      const result = await dispatchCommand({
+        source: 'thumbnail-menu',
+        workingBytes,
+        command: {
+          type: 'REORDER_PAGES',
+          fromIndex: dragPage - 1,
+          toIndex: targetPage - 1,
+        }
+      });
+      if (result.success) {
+        setPage(targetPage);
+        setSelectedPages([]);
+      }
+      setDragPage(null);
+    });
   };
 
   const handleSelect = (
