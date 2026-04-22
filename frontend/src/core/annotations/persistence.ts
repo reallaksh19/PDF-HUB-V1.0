@@ -1,6 +1,7 @@
 import { openDB } from 'idb';
 import type { PdfAnnotation } from './types';
 import { error, debug } from '@/core/logger/service';
+import { throttle } from '../utils/throttle';
 
 const DB_NAME = 'DocCraftAnnotations';
 const STORE_NAME = 'annotations';
@@ -15,7 +16,7 @@ export const getDb = async () => {
   });
 };
 
-export const saveAnnotations = async (
+const _saveAnnotations = async (
   documentKey: string,
   annotations: PdfAnnotation[],
 ): Promise<void> => {
@@ -32,6 +33,8 @@ export const saveAnnotations = async (
     error('annotation', 'Failed to save to IndexedDB', { error: String(err) });
   }
 };
+
+export const saveAnnotations = throttle(_saveAnnotations, 1000);
 
 export const loadAnnotations = async (documentKey: string): Promise<PdfAnnotation[]> => {
   try {
