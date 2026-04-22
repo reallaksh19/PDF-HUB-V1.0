@@ -19,7 +19,7 @@ export type SidebarTab =
   | 'search'
   | 'macros';
 
-export type InspectorTab = 'properties' | 'style' | 'metadata';
+export type InspectorTab = 'properties' | 'style' | 'metadata' | 'review';
 export type RibbonTab = 'file' | 'organize' | 'annotate' | 'macro' | 'view';
 
 export interface EditorState {
@@ -29,4 +29,5 @@ export interface EditorState {
   activeRibbonTab: RibbonTab;
   leftPanelWidth: number;
   rightPanelWidth: number;
+  hideResolved: boolean;
 }

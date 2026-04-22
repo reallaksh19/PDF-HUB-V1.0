@@ -1,16 +1,9 @@
-﻿# A7 Result
+# A7 Result
 
-## Summary
-- (pending)
+Completed Review Workflow Depth.
 
-## Files Changed
-- (pending)
-
-## Automated Validation
-- (pending)
-
-## Manual Validation
-- (pending)
-
-## Risks / Follow-ups
-- (pending)
+- Added metadata to AnnotationData: `author`, `reviewStatus`, `category`, and `replies`.
+- Overhauled `CommentsSidebar` with grouping by page, filtering by status, reply threads, bulk actions (Resolve, Reopen, Reject), and Export buttons.
+- Added `hideResolved` boolean to editor state. Canvas now conditionally filters resolved annotations based on `hideResolved` unless selected. Hide resolved toggle is in CommentsSidebar.
+- Added "Review" tab to `InspectorPanel` to edit review metadata fields.
+- Automated tests all passing successfully (`tsc`, `lint`, `vitest`).

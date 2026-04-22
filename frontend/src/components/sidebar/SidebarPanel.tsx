@@ -12,7 +12,6 @@ import { MacrosSidebar } from '@/components/sidebar/MacrosSidebar';
 import {
   Layers,
   Bookmark,
-  MessageSquare,
   Search,
   ChevronLeft,
   ChevronRight,
@@ -21,6 +20,8 @@ import {
   Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { exportReviewJson, exportReviewText } from '@/core/review/export';
+import type { PdfAnnotation, ReplyThreadItem } from '@/core/annotations/types';
 
 export const SidebarPanel: React.FC = () => {
   const { sidebarTab, leftPanelWidth, setLeftPanelWidth } = useEditorStore();
@@ -396,51 +397,175 @@ const BookmarksSidebar: React.FC = () => {
 };
 
 const CommentsSidebar: React.FC = () => {
-  const { annotations, activeAnnotationId, setActiveAnnotationId } = useAnnotationStore();
+  const { hideResolved, setHideResolved } = useEditorStore();
+  const { annotations, selectedAnnotationIds, activeAnnotationId, setActiveAnnotationId, updateManyAnnotations, updateAnnotation } = useAnnotationStore();
   const { setPage } = useSessionStore();
+  const [filter, setFilter] = useState<'all' | 'open' | 'resolved' | 'rejected'>('all');
+  const [replyText, setReplyText] = useState<{ [id: string]: string }>({});
 
-  if (annotations.length === 0) {
-    return (
-      <FeaturePlaceholder
-        name="Comments"
-        description="Create annotations on the page to see them listed here."
-        icon={<MessageSquare />}
-      />
-    );
-  }
+  const filteredAnnotations = annotations.filter((ann) => {
+    if (filter === 'all') return true;
+    const status = ann.data.reviewStatus || 'open';
+    return status === filter;
+  });
+
+  const sortedAnnotations = filteredAnnotations.slice().sort((a, b) => a.pageNumber - b.pageNumber || b.updatedAt - a.updatedAt);
+
+  const handleBulkAction = (status: 'open' | 'resolved' | 'rejected') => {
+    if (selectedAnnotationIds.length === 0) return;
+    const updates = selectedAnnotationIds.map((id) => ({
+      id,
+      data: {
+        data: {
+          ...(annotations.find(a => a.id === id)?.data || {}),
+          reviewStatus: status
+        }
+      } as Partial<PdfAnnotation>
+    }));
+    updateManyAnnotations(updates);
+  };
+
+  const handleReply = (annId: string) => {
+    const text = replyText[annId]?.trim();
+    if (!text) return;
+
+    const ann = annotations.find(a => a.id === annId);
+    if (!ann) return;
+
+    const replies: ReplyThreadItem[] = Array.isArray(ann.data.replies) ? [...ann.data.replies] : [];
+    replies.push({
+      id: uuidv4(),
+      text,
+      author: 'System',
+      createdAt: Date.now()
+    });
+
+    updateAnnotation(annId, {
+      data: {
+        ...ann.data,
+        replies
+      }
+    });
+
+    setReplyText(prev => ({ ...prev, [annId]: '' }));
+  };
 
   return (
-    <div className="p-3 space-y-2">
-      {annotations
-        .slice()
-        .sort((a, b) => a.pageNumber - b.pageNumber || b.updatedAt - a.updatedAt)
-        .map((annotation) => {
-          const selected = annotation.id === activeAnnotationId;
-          const text =
-            typeof annotation.data.text === 'string' && annotation.data.text.trim()
-              ? annotation.data.text
-              : annotation.type.toUpperCase();
+    <div className="p-3 flex flex-col h-full space-y-4">
+      <div className="space-y-2 shrink-0">
+        <div className="flex items-center justify-between">
+          <label className="flex items-center text-xs space-x-2 text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={hideResolved}
+              onChange={(e) => setHideResolved(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            <span>Hide resolved on canvas</span>
+          </label>
+        </div>
 
-          return (
-            <button
-              key={annotation.id}
-              className={`w-full text-left rounded-lg border p-3 ${
-                selected
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
-                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950'
-              }`}
-              onClick={() => {
-                setActiveAnnotationId(annotation.id);
-                setPage(annotation.pageNumber);
-              }}
-            >
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Page {annotation.pageNumber} · {annotation.type}
+        <select
+          className="w-full text-sm rounded-md border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 px-2"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as 'all' | 'open' | 'resolved' | 'rejected')}
+        >
+          <option value="all">All Comments</option>
+          <option value="open">Open</option>
+          <option value="resolved">Resolved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+
+        {selectedAnnotationIds.length > 0 && (
+          <div className="flex gap-1">
+            <Button variant="secondary" size="sm" onClick={() => handleBulkAction('resolved')} className="flex-1 text-[10px] h-7">Resolve</Button>
+            <Button variant="secondary" size="sm" onClick={() => handleBulkAction('open')} className="flex-1 text-[10px] h-7">Reopen</Button>
+            <Button variant="secondary" size="sm" onClick={() => handleBulkAction('rejected')} className="flex-1 text-[10px] h-7">Reject</Button>
+          </div>
+        )}
+
+        <div className="flex gap-1">
+           <Button variant="ghost" size="sm" onClick={() => exportReviewJson(annotations)} className="flex-1 text-[10px] h-7 bg-slate-100 dark:bg-slate-800">Export JSON</Button>
+           <Button variant="ghost" size="sm" onClick={() => exportReviewText(annotations)} className="flex-1 text-[10px] h-7 bg-slate-100 dark:bg-slate-800">Export Text</Button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto space-y-3 pb-8">
+        {sortedAnnotations.length === 0 ? (
+           <div className="text-sm text-slate-500 text-center py-4">No comments match the filter.</div>
+        ) : (
+          sortedAnnotations.map((annotation) => {
+            const selected = annotation.id === activeAnnotationId || selectedAnnotationIds.includes(annotation.id);
+            const text = typeof annotation.data.text === 'string' && annotation.data.text.trim()
+                ? annotation.data.text
+                : `[${annotation.type.toUpperCase()}]`;
+
+            const status = annotation.data.reviewStatus || 'open';
+            const author = annotation.data.author || 'System';
+
+            return (
+              <div
+                key={annotation.id}
+                className={`flex flex-col text-left rounded-lg border p-3 ${
+                  selected
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
+                    : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950'
+                }`}
+              >
+                <button
+                  className="w-full text-left"
+                  onClick={() => {
+                    setActiveAnnotationId(annotation.id);
+                    setPage(annotation.pageNumber);
+                  }}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Page {annotation.pageNumber} · {annotation.type}
+                    </span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                      status === 'resolved' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
+                      status === 'rejected' ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' :
+                      'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                    }`}>
+                      {status}
+                    </span>
+                  </div>
+                  <div className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{author}</div>
+                  <div className="text-sm text-slate-800 dark:text-slate-100 mb-2">{text}</div>
+                </button>
+
+                <div className="mt-2 space-y-2 border-t border-slate-100 dark:border-slate-800 pt-2">
+                  {(annotation.data.replies || []).map((reply: ReplyThreadItem) => (
+                    <div key={reply.id} className="text-xs space-y-0.5 bg-slate-50 dark:bg-slate-900 p-2 rounded">
+                      <div className="flex justify-between font-medium text-slate-600 dark:text-slate-400">
+                         <span>{reply.author}</span>
+                         <span className="text-[9px] opacity-70">{new Date(reply.createdAt).toLocaleTimeString()}</span>
+                      </div>
+                      <div className="text-slate-800 dark:text-slate-200">{reply.text}</div>
+                    </div>
+                  ))}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      className="flex-1 text-xs border border-slate-200 dark:border-slate-700 rounded px-2 py-1 bg-white dark:bg-slate-950"
+                      placeholder="Reply..."
+                      value={replyText[annotation.id] || ''}
+                      onChange={(e) => setReplyText(prev => ({ ...prev, [annotation.id]: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleReply(annotation.id);
+                        }
+                      }}
+                    />
+                    <Button variant="secondary" size="sm" className="h-6 px-2 text-[10px]" onClick={() => handleReply(annotation.id)}>Reply</Button>
+                  </div>
+                </div>
               </div>
-              <div className="mt-1 text-sm text-slate-800 dark:text-slate-100 truncate">{text}</div>
-            </button>
-          );
-        })}
+            );
+          })
+        )}
+      </div>
     </div>
   );
 };
