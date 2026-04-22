@@ -9,6 +9,7 @@ import { useAnnotationStore } from '@/core/annotations/store';
 import type { PdfAnnotation, Rect, AnnotationType, Point2D } from '@/core/annotations/types';
 import { useEditorStore } from '@/core/editor/store';
 import { useSessionStore } from '@/core/session/store';
+import { useReviewStore } from '@/core/review/store';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 
@@ -67,6 +68,7 @@ export const DocumentWorkspace: React.FC = () => {
   } = useSessionStore();
 
   const { activeTool } = useEditorStore();
+  const { hideResolved } = useReviewStore();
 
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -213,6 +215,7 @@ export const DocumentWorkspace: React.FC = () => {
               activeTool={activeTool}
               pageAnnotations={annotations
                 .filter((annotation) => annotation.pageNumber === pageNumber)
+                .filter((annotation) => !hideResolved || annotation.data.review?.status !== 'resolved')
                 .slice()
                 .sort((a, b) => readZIndex(a) - readZIndex(b))}
               selectedAnnotationIds={selectedAnnotationIds}

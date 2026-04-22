@@ -3,7 +3,9 @@ import { useEditorStore } from '@/core/editor/store';
 import { useAnnotationStore } from '@/core/annotations/store';
 import type { AnnotationType, PdfAnnotation } from '@/core/annotations/types';
 import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
-import { Settings, Palette, Info, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Settings, Palette, Info, ChevronRight, ChevronLeft, MessageSquare, Send } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
+import type { ReviewReply, ReviewStatus } from '@/core/review/types';
 import { Button } from '@/components/ui/Button';
 
 const ANNOTATION_TYPES: AnnotationType[] = [
@@ -70,6 +72,7 @@ export const InspectorPanel: React.FC = () => {
     { id: 'properties', icon: Settings, label: 'Properties' },
     { id: 'style', icon: Palette, label: 'Style' },
     { id: 'metadata', icon: Info, label: 'Metadata' },
+    { id: 'review', icon: MessageSquare, label: 'Review' },
   ] as const;
 
   return (
@@ -144,7 +147,279 @@ export const InspectorPanel: React.FC = () => {
         {activeAnnotation && inspectorTab === 'metadata' && (
           <MetadataTab annotation={activeAnnotation} />
         )}
+
+        {inspectorTab === 'review' && (
+          <ReviewTab
+            activeAnnotation={activeAnnotation}
+            selection={selection}
+            updateAnnotation={updateAnnotation}
+            updateManyAnnotations={updateManyAnnotations}
+          />
+        )}
       </div>
+    </div>
+  );
+};
+
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="space-y-3">
+    <SectionTitle title={title} />
+    {children}
+  </div>
+);
+
+const ReviewTab: React.FC<{
+  activeAnnotation: PdfAnnotation | null;
+  selection: PdfAnnotation[];
+  updateAnnotation: (id: string, data: Partial<PdfAnnotation>) => void;
+  updateManyAnnotations: (updates: Array<{ id: string; data: Partial<PdfAnnotation> }>) => void;
+}> = ({ activeAnnotation, selection, updateAnnotation, updateManyAnnotations }) => {
+  const [newReplyText, setNewReplyText] = useState('');
+
+  if (selection.length > 1) {
+    return (
+      <div className="p-4 space-y-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Bulk Actions</h3>
+        <p className="text-xs text-slate-500 mb-4">{selection.length} annotations selected</p>
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              const patches = selection.map(a => ({
+                id: a.id,
+                data: {
+                  data: {
+                    ...a.data,
+                    review: {
+                      ...(a.data.review || { author: 'Unknown', createdAt: Date.now(), replies: [] }),
+                      status: 'resolved' as ReviewStatus,
+                      updatedAt: Date.now()
+                    }
+                  }
+                }
+              }));
+              updateManyAnnotations(patches);
+            }}
+          >
+            Resolve All
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const patches = selection.map(a => ({
+                id: a.id,
+                data: {
+                  data: {
+                    ...a.data,
+                    review: {
+                      ...(a.data.review || { author: 'Unknown', createdAt: Date.now(), replies: [] }),
+                      status: 'open' as ReviewStatus,
+                      updatedAt: Date.now()
+                    }
+                  }
+                }
+              }));
+              updateManyAnnotations(patches);
+            }}
+          >
+            Reopen All
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => {
+              const patches = selection.map(a => ({
+                id: a.id,
+                data: {
+                  data: {
+                    ...a.data,
+                    review: {
+                      ...(a.data.review || { author: 'Unknown', createdAt: Date.now(), replies: [] }),
+                      status: 'rejected' as ReviewStatus,
+                      updatedAt: Date.now()
+                    }
+                  }
+                }
+              }));
+              updateManyAnnotations(patches);
+            }}
+          >
+            Reject All
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!activeAnnotation) return null;
+
+  return (
+    <div className="p-4 space-y-6">
+      <Section title="Review Status">
+        <LabeledSelect
+          label="Status"
+          value={activeAnnotation.data.review?.status || 'open'}
+          onChange={(value) => {
+            updateAnnotation(activeAnnotation.id, {
+              data: {
+                ...activeAnnotation.data,
+                review: {
+                  ...(activeAnnotation.data.review || { author: 'Current User', createdAt: Date.now(), replies: [] }),
+                  status: value as ReviewStatus,
+                  updatedAt: Date.now()
+                }
+              }
+            });
+          }}
+          options={[
+            { label: 'Open', value: 'open' },
+            { label: 'Resolved', value: 'resolved' },
+            { label: 'Rejected', value: 'rejected' },
+          ]}
+        />
+
+        <LabeledInputShell label="Author">
+          <input
+            type="text"
+            className={baseInputClass}
+            value={activeAnnotation.data.review?.author || ''}
+            placeholder="e.g. Alice"
+            onChange={(e) => {
+              updateAnnotation(activeAnnotation.id, {
+                data: {
+                  ...activeAnnotation.data,
+                  review: {
+                    ...(activeAnnotation.data.review || { status: 'open' as ReviewStatus, createdAt: Date.now(), replies: [] }),
+                    author: e.target.value,
+                    updatedAt: Date.now()
+                  }
+                }
+              });
+            }}
+          />
+        </LabeledInputShell>
+
+        <LabeledInputShell label="Title (Optional)">
+          <input
+            type="text"
+            className={baseInputClass}
+            value={activeAnnotation.data.review?.title || ''}
+            placeholder="Review Title"
+            onChange={(e) => {
+              updateAnnotation(activeAnnotation.id, {
+                data: {
+                  ...activeAnnotation.data,
+                  review: {
+                    ...(activeAnnotation.data.review || { author: 'Current User', status: 'open' as ReviewStatus, createdAt: Date.now(), replies: [] }),
+                    title: e.target.value,
+                    updatedAt: Date.now()
+                  }
+                }
+              });
+            }}
+          />
+        </LabeledInputShell>
+
+        <LabeledInputShell label="Category (Optional)">
+          <input
+            type="text"
+            className={baseInputClass}
+            value={activeAnnotation.data.review?.category || ''}
+            placeholder="e.g. Design, Grammar"
+            onChange={(e) => {
+              updateAnnotation(activeAnnotation.id, {
+                data: {
+                  ...activeAnnotation.data,
+                  review: {
+                    ...(activeAnnotation.data.review || { author: 'Current User', status: 'open' as ReviewStatus, createdAt: Date.now(), replies: [] }),
+                    category: e.target.value,
+                    updatedAt: Date.now()
+                  }
+                }
+              });
+            }}
+          />
+        </LabeledInputShell>
+      </Section>
+
+      <Section title="Replies">
+        <div className="space-y-3 mb-4">
+          {(!activeAnnotation.data.review?.replies || activeAnnotation.data.review.replies.length === 0) ? (
+            <div className="text-xs text-slate-500 italic">No replies yet.</div>
+          ) : (
+            activeAnnotation.data.review.replies.map(reply => (
+              <div key={reply.id} className="bg-slate-100 dark:bg-slate-800 p-2 rounded-md text-sm">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="font-medium text-xs">{reply.author}</span>
+                  <span className="text-[10px] text-slate-500">{new Date(reply.createdAt).toLocaleDateString()}</span>
+                </div>
+                <p className="text-slate-700 dark:text-slate-300">{reply.content}</p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            type="text"
+            className={`${baseInputClass} flex-1`}
+            placeholder="Add a reply..."
+            value={newReplyText}
+            onChange={(e) => setNewReplyText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && newReplyText.trim()) {
+                const newReply: ReviewReply = {
+                  id: uuidv4(),
+                  author: 'Current User',
+                  content: newReplyText.trim(),
+                  createdAt: Date.now()
+                };
+
+                updateAnnotation(activeAnnotation.id, {
+                  data: {
+                    ...activeAnnotation.data,
+                    review: {
+                      ...(activeAnnotation.data.review || { author: 'Current User', status: 'open' as ReviewStatus, createdAt: Date.now(), replies: [] }),
+                      replies: [...(activeAnnotation.data.review?.replies || []), newReply],
+                      updatedAt: Date.now()
+                    }
+                  }
+                });
+                setNewReplyText('');
+              }
+            }}
+          />
+          <Button
+            size="icon"
+            onClick={() => {
+              if (newReplyText.trim()) {
+                const newReply: ReviewReply = {
+                  id: uuidv4(),
+                  author: 'Current User',
+                  content: newReplyText.trim(),
+                  createdAt: Date.now()
+                };
+
+                updateAnnotation(activeAnnotation.id, {
+                  data: {
+                    ...activeAnnotation.data,
+                    review: {
+                      ...(activeAnnotation.data.review || { author: 'Current User', status: 'open' as ReviewStatus, createdAt: Date.now(), replies: [] }),
+                      replies: [...(activeAnnotation.data.review?.replies || []), newReply],
+                      updatedAt: Date.now()
+                    }
+                  }
+                });
+                setNewReplyText('');
+              }
+            }}
+          >
+            <Send className="w-4 h-4" />
+          </Button>
+        </div>
+      </Section>
     </div>
   );
 };
