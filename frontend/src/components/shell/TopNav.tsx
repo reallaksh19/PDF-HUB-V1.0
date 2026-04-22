@@ -1,12 +1,36 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useDarkMode } from '@/hooks/useDarkMode';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Sun, Moon, Settings, Search } from 'lucide-react';
+import { useSearchStore } from '@/core/search/store';
+import { useEditorStore } from '@/core/editor/store';
 
 export const TopNav: React.FC = () => {
   const { isDarkMode, toggleDarkMode } = useDarkMode();
+  const { query, setQuery, nextResult } = useSearchStore();
+  const { setSidebarTab, setLeftPanelWidth, leftPanelWidth } = useEditorStore();
+
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setQuery(value);
+
+    if (value) {
+      setSidebarTab('search');
+      if (leftPanelWidth <= 0.1) {
+        setLeftPanelWidth(20);
+      }
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      nextResult();
+    }
+  };
 
   return (
     <div className="flex items-center justify-between h-12 px-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
@@ -39,8 +63,12 @@ export const TopNav: React.FC = () => {
         <div className="relative hidden lg:block">
           <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-slate-400" />
           <input
+            ref={inputRef}
             type="text"
-            placeholder="Search tools..."
+            value={query}
+            onChange={handleQueryChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Search document..."
             className="h-9 w-48 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 px-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
