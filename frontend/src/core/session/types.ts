@@ -1,5 +1,5 @@
-export type FitMode = 'manual' | 'width' | 'page';
-export type ViewMode = 'continuous' | 'single' | 'two-page';
+export type FitMode = 'manual' | 'fit-width' | 'fit-page';
+export type ViewMode = 'continuous' | 'single';
 
 export interface ViewState {
   currentPage: number;
@@ -14,7 +14,9 @@ export interface DocumentSession {
   originalBytes: Uint8Array | null;
   workingBytes: Uint8Array | null;
   pageCount: number;
-  isDirty: boolean;
+  isDocumentDirty: boolean;
+  isReviewDirty: boolean;
+  isSessionDirty: boolean;
   saveHandle: FileSystemFileHandle | null;
   selectedPages: number[];
   viewState: ViewState;

@@ -105,7 +105,7 @@ export const useKeyboardShortcuts = () => {
 
       if (!isTypingTarget && event.altKey && event.key === '3') {
         event.preventDefault();
-        setViewMode('two-page');
+        setViewMode('continuous');
         return;
       }
 

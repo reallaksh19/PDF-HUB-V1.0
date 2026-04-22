@@ -15,7 +15,7 @@ export const ToolbarFile: React.FC = () => {
     fileName,
     saveHandle,
     setSaveHandle,
-    setDirty,
+    setDocumentDirty,
   } = useSessionStore();
 
   const { annotations } = useAnnotationStore();
@@ -54,7 +54,7 @@ export const ToolbarFile: React.FC = () => {
       if (nextHandle) {
         setSaveHandle(nextHandle);
       }
-      setDirty(false);
+      setDocumentDirty(false);
     } catch (err) {
       if (saveHandle && isHandleAccessError(err)) {
         warn('session', 'Existing save handle became invalid, retrying with Save As flow', {
@@ -64,7 +64,7 @@ export const ToolbarFile: React.FC = () => {
         if (nextHandle) {
           setSaveHandle(nextHandle);
         }
-        setDirty(false);
+        setDocumentDirty(false);
         return;
       }
       logError('session', 'Failed to save PDF', { error: String(err), fileName });

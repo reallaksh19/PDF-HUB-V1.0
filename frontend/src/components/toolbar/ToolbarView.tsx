@@ -61,10 +61,10 @@ export const ToolbarView: React.FC = () => {
 
       <Tooltip content="Fit Width">
         <Button
-          variant={viewState.fitMode === 'width' ? 'secondary' : 'ghost'}
+          variant={viewState.fitMode === 'fit-width' ? 'secondary' : 'ghost'}
           size="icon"
           className="h-8 w-8 ml-2"
-          onClick={() => setFitMode('width')}
+          onClick={() => setFitMode('fit-width')}
         >
           <Expand className="w-4 h-4" />
         </Button>
@@ -72,10 +72,10 @@ export const ToolbarView: React.FC = () => {
 
       <Tooltip content="Fit Page">
         <Button
-          variant={viewState.fitMode === 'page' ? 'secondary' : 'ghost'}
+          variant={viewState.fitMode === 'fit-page' ? 'secondary' : 'ghost'}
           size="icon"
           className="h-8 w-8"
-          onClick={() => setFitMode('page')}
+          onClick={() => setFitMode('fit-page')}
         >
           <Maximize className="w-4 h-4" />
         </Button>
@@ -95,13 +95,6 @@ export const ToolbarView: React.FC = () => {
           onClick={() => setViewMode('single')}
         >
           Single
-        </Button>
-        <Button
-          variant={viewState.viewMode === 'two-page' ? 'secondary' : 'ghost'}
-          size="sm"
-          onClick={() => setViewMode('two-page')}
-        >
-          2-Up
         </Button>
       </div>
 

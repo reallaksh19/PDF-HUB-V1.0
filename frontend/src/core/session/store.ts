@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { DocumentSession, FitMode, ViewMode } from './types';
+import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
+import { useAnnotationStore } from '../annotations/store';
 
 export interface OpenDocumentPayload {
   documentKey: string;
@@ -16,25 +18,35 @@ export interface SessionActions {
   setZoom: (zoom: number) => void;
   setFitMode: (fitMode: FitMode) => void;
   setViewMode: (viewMode: ViewMode) => void;
-  setDirty: (isDirty: boolean) => void;
+  setDocumentDirty: (isDirty: boolean) => void;
+  setReviewDirty: (isDirty: boolean) => void;
+  setSessionDirty: (isDirty: boolean) => void;
   setSaveHandle: (saveHandle: FileSystemFileHandle | null) => void;
   setSelectedPages: (pages: number[]) => void;
   toggleSelectedPage: (page: number) => void;
   clearSelectedPages: () => void;
   clearDocument: () => void;
+
+  // Save / Export
+  saveWorkingDocument: () => Promise<Uint8Array | null>;
+  saveSessionSnapshot: () => Promise<void>;
+  exportFlattenedReviewCopy: () => Promise<Uint8Array | null>;
+  downloadProcessedPdf: () => Promise<Uint8Array | null>;
 }
 
 function uniqSorted(values: number[]): number[] {
   return Array.from(new Set(values)).sort((a, b) => a - b);
 }
 
-export const useSessionStore = create<DocumentSession & SessionActions>((set) => ({
+export const useSessionStore = create<DocumentSession & SessionActions>((set, get) => ({
   documentKey: null,
   fileName: null,
   originalBytes: null,
   workingBytes: null,
   pageCount: 0,
-  isDirty: false,
+  isDocumentDirty: false,
+  isReviewDirty: false,
+  isSessionDirty: false,
   saveHandle: null,
   selectedPages: [],
   viewState: {
@@ -51,7 +63,9 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       originalBytes: new Uint8Array(bytes),
       workingBytes: new Uint8Array(bytes),
       pageCount,
-      isDirty: false,
+      isDocumentDirty: false,
+      isReviewDirty: false,
+      isSessionDirty: false,
       saveHandle,
       selectedPages: [],
       viewState: {
@@ -66,7 +80,7 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
     set((state) => ({
       workingBytes: new Uint8Array(bytes),
       pageCount,
-      isDirty: true,
+      isDocumentDirty: true,
       selectedPages: state.selectedPages.filter((page) => page >= 1 && page <= pageCount),
       viewState: {
         ...state.viewState,
@@ -107,7 +121,9 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       },
     })),
 
-  setDirty: (isDirty) => set({ isDirty }),
+  setDocumentDirty: (isDocumentDirty) => set({ isDocumentDirty }),
+  setReviewDirty: (isReviewDirty) => set({ isReviewDirty }),
+  setSessionDirty: (isSessionDirty) => set({ isSessionDirty }),
   setSaveHandle: (saveHandle) => set({ saveHandle }),
 
   setSelectedPages: (pages) =>
@@ -136,7 +152,9 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       originalBytes: null,
       workingBytes: null,
       pageCount: 0,
-      isDirty: false,
+      isDocumentDirty: false,
+      isReviewDirty: false,
+      isSessionDirty: false,
       saveHandle: null,
       selectedPages: [],
       viewState: {
@@ -146,4 +164,29 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
         viewMode: 'continuous',
       },
     }),
+
+  saveWorkingDocument: async () => {
+    const { workingBytes } = get();
+    if (!workingBytes) return null;
+    set({ isDocumentDirty: false });
+    return workingBytes;
+  },
+
+  saveSessionSnapshot: async () => {
+    // Session snapshot logic is a placeholder
+    set({ isSessionDirty: false });
+  },
+
+  exportFlattenedReviewCopy: async () => {
+    const { workingBytes } = get();
+    if (!workingBytes) return null;
+    const annotations = useAnnotationStore.getState().annotations;
+    const exportedBytes = await PdfEditAdapter.exportWithAnnotations(workingBytes, annotations);
+    return exportedBytes;
+  },
+
+  downloadProcessedPdf: async () => {
+    const { workingBytes } = get();
+    return workingBytes;
+  },
 }));

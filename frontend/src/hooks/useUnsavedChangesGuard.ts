@@ -2,11 +2,11 @@ import { useEffect } from 'react';
 import { useSessionStore } from '@/core/session/store';
 
 export const useUnsavedChangesGuard = () => {
-  const isDirty = useSessionStore((state) => state.isDirty);
+  const isDocumentDirty = useSessionStore((state) => state.isDocumentDirty);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!useSessionStore.getState().isDirty) {
+      if (!useSessionStore.getState().isDocumentDirty) {
         return;
       }
       event.preventDefault();
@@ -15,5 +15,5 @@ export const useUnsavedChangesGuard = () => {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isDirty]);
+  }, [isDocumentDirty]);
 };
