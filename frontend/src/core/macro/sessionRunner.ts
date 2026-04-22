@@ -30,10 +30,12 @@ export async function runMacroRecipeAgainstSession(
     recipe,
   );
 
-  useSessionStore.getState().replaceWorkingCopy(result.workingBytes, result.pageCount);
-  useSessionStore.getState().setSelectedPages(result.selectedPages);
+  if (!recipe.dryRun) {
+    useSessionStore.getState().replaceWorkingCopy(result.workingBytes, result.pageCount);
+    useSessionStore.getState().setSelectedPages(result.selectedPages);
+  }
 
-  if (options?.saveOutputs) {
+  if (!recipe.dryRun && options?.saveOutputs) {
     for (const output of result.extractedOutputs) {
       await FileAdapter.savePdfBytes(output.bytes, output.name, null);
     }
