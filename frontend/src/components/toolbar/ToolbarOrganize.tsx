@@ -22,7 +22,6 @@ export const ToolbarOrganize: React.FC = () => {
     pageCount,
     selectedPages,
     viewState,
-    replaceWorkingCopy,
     setPage,
     clearSelectedPages,
   } = useSessionStore();
@@ -30,12 +29,17 @@ export const ToolbarOrganize: React.FC = () => {
   const activePages = selectedPages.length > 0 ? selectedPages : [viewState.currentPage];
   const activeIndices = activePages.map((page) => page - 1);
 
-  const applyNewBytes = async (bytes: Uint8Array, nextPage?: number) => {
-    const nextCount = await PdfEditAdapter.countPages(bytes);
-    replaceWorkingCopy(bytes, nextCount);
-    clearSelectedPages();
-    if (nextPage) {
-      setPage(nextPage);
+  const getCommandContext = () => ({
+    source: 'toolbar' as const,
+    timestamp: Date.now(),
+  });
+
+  const handleCommandResult = (result: { success: boolean; error?: string }, nextPage?: number) => {
+    if (result.success) {
+      clearSelectedPages();
+      if (nextPage) {
+        setPage(nextPage);
+      }
     }
   };
 
@@ -47,17 +51,28 @@ export const ToolbarOrganize: React.FC = () => {
     if (!files.length) {
       return;
     }
-    const merged = await PdfEditAdapter.merge(workingBytes, files.map((file) => file.bytes));
-    await applyNewBytes(merged);
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: { type: 'MERGE_FILES', donorBytesList: files.map((f) => f.bytes) },
+      context: getCommandContext(),
+    });
+    handleCommandResult(result);
   };
 
   const handleExtract = async () => {
     if (!workingBytes || activeIndices.length === 0) {
       return;
     }
-    const extracted = await PdfEditAdapter.extractPages(workingBytes, activeIndices);
-    const name = `extract-pages-${activePages.join('-')}.pdf`;
-    await FileAdapter.savePdfBytes(extracted, name, null);
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: { type: 'EXTRACT_PAGES', pageIndices: activeIndices },
+      context: getCommandContext(),
+    });
+    if (result.success && result.extractedOutputs) {
+      for (const output of result.extractedOutputs) {
+        await FileAdapter.savePdfBytes(output.bytes, output.name, null);
+      }
+    }
   };
 
   const handleInsertFromPdf = async () => {
@@ -70,12 +85,12 @@ export const ToolbarOrganize: React.FC = () => {
       return;
     }
 
-    const inserted = await PdfEditAdapter.insertAt(
-      workingBytes,
-      picked.bytes,
-      viewState.currentPage - 1,
-    );
-    await applyNewBytes(inserted, viewState.currentPage);
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: { type: 'INSERT_FROM_PDF', donorBytes: picked.bytes, atIndex: viewState.currentPage - 1 },
+      context: getCommandContext(),
+    });
+    handleCommandResult(result, viewState.currentPage);
   };
 
   const handleDeletePages = async () => {
@@ -85,35 +100,54 @@ export const ToolbarOrganize: React.FC = () => {
     if (activeIndices.length >= pageCount) {
       return;
     }
-    const next = await PdfEditAdapter.removePages(workingBytes, activeIndices);
-    await applyNewBytes(next, 1);
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: { type: 'DELETE_PAGES', pageIndices: activeIndices },
+      context: getCommandContext(),
+    });
+    handleCommandResult(result, 1);
   };
 
   const handleSplitOut = async () => {
     if (!workingBytes || activeIndices.length === 0) {
       return;
     }
-    const extracted = await PdfEditAdapter.extractPages(workingBytes, activeIndices);
-    const remaining = await PdfEditAdapter.removePages(workingBytes, activeIndices);
-    const name = `split-pages-${activePages.join('-')}.pdf`;
-    await FileAdapter.savePdfBytes(extracted, name, null);
-    await applyNewBytes(remaining, 1);
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: { type: 'SPLIT_PAGES', pageIndices: activeIndices },
+      context: getCommandContext(),
+    });
+
+    if (result.success && result.extractedOutputs) {
+      for (const output of result.extractedOutputs) {
+        await FileAdapter.savePdfBytes(output.bytes, output.name, null);
+      }
+    }
+    handleCommandResult(result, 1);
   };
 
   const handleDuplicatePages = async () => {
     if (!workingBytes || activeIndices.length === 0) {
       return;
     }
-    const next = await PdfEditAdapter.duplicatePages(workingBytes, activeIndices);
-    await applyNewBytes(next, viewState.currentPage);
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: { type: 'DUPLICATE_PAGES', pageIndices: activeIndices },
+      context: getCommandContext(),
+    });
+    handleCommandResult(result, viewState.currentPage);
   };
 
   const handleRotatePages = async () => {
     if (!workingBytes || activeIndices.length === 0) {
       return;
     }
-    const next = await PdfEditAdapter.rotatePages(workingBytes, activeIndices, 90);
-    await applyNewBytes(next, viewState.currentPage);
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: { type: 'ROTATE_PAGES', pageIndices: activeIndices, degrees: 90 },
+      context: getCommandContext(),
+    });
+    handleCommandResult(result, viewState.currentPage);
   };
 
   const handleInsertBlankPage = async () => {
@@ -138,8 +172,12 @@ export const ToolbarOrganize: React.FC = () => {
       .toLowerCase();
 
     const atIndex = where === 'before' ? viewState.currentPage - 1 : viewState.currentPage;
-    const next = await PdfEditAdapter.insertBlankPage(workingBytes, atIndex, size);
-    await applyNewBytes(next, atIndex + 1);
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: { type: 'INSERT_BLANK_PAGE', atIndex, size },
+      context: getCommandContext(),
+    });
+    handleCommandResult(result, atIndex + 1);
   };
 
   const handleReplacePage = async () => {
@@ -157,14 +195,18 @@ export const ToolbarOrganize: React.FC = () => {
     );
 
     const safeDonorPage = Math.max(1, Math.min(donorCount, donorPage));
-    const next = await PdfEditAdapter.replacePage(
-      workingBytes,
-      viewState.currentPage - 1,
-      donor.bytes,
-      safeDonorPage - 1,
-    );
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const result = await dispatchCommand({
+      payload: {
+        type: 'REPLACE_PAGE',
+        targetPageIndex: viewState.currentPage - 1,
+        donorBytes: donor.bytes,
+        donorPageIndex: safeDonorPage - 1
+      },
+      context: getCommandContext(),
+    });
 
-    await applyNewBytes(next, viewState.currentPage);
+    handleCommandResult(result, viewState.currentPage);
   };
 
   return (

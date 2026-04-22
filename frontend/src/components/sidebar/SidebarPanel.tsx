@@ -108,7 +108,6 @@ const ThumbnailSidebar: React.FC = () => {
     workingBytes,
     viewState,
     setPage,
-    replaceWorkingCopy,
     selectedPages,
     setSelectedPages,
     toggleSelectedPage,
@@ -153,12 +152,26 @@ const ThumbnailSidebar: React.FC = () => {
 
   const handleDrop = async (targetPage: number) => {
     if (!workingBytes || dragPage === null || dragPage === targetPage) return;
-    const nextBytes = await PdfEditAdapter.movePage(workingBytes, dragPage - 1, targetPage - 1);
-    const nextCount = await PdfEditAdapter.countPages(nextBytes);
-    replaceWorkingCopy(nextBytes, nextCount);
-    setPage(targetPage);
-    setSelectedPages([]);
-    setDragPage(null);
+
+    // PdfEditAdapter.movePage essentially reorders pages.
+    // However, reorderPages expects a full array of indices.
+    const pageCount = await PdfEditAdapter.countPages(workingBytes);
+    const order = Array.from({ length: pageCount }, (_, i) => i);
+    const [moved] = order.splice(dragPage - 1, 1);
+    order.splice(targetPage - 1, 0, moved);
+
+    const { dispatchCommand } = await import('@/core/commands/dispatch');
+    const timestamp = new Date().getTime();
+    const result = await dispatchCommand({
+      payload: { type: 'REORDER_PAGES', order },
+      context: { source: 'thumbnail-menu', timestamp }
+    });
+
+    if (result.success) {
+      setPage(targetPage);
+      setSelectedPages([]);
+      setDragPage(null);
+    }
   };
 
   const handleSelect = (
