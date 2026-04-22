@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/Badge';
 import { useSessionStore } from '@/core/session/store';
 
 export const StatusBar: React.FC = () => {
-  const { isDirty, viewState, pageCount, setZoom } = useSessionStore();
+  const { isDocumentDirty, viewState, pageCount, setZoom } = useSessionStore();
   const zoomSteps = [25, 50, 75, 100, 125, 150, 200, 300, 400];
 
   const handleZoomChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -18,7 +18,7 @@ export const StatusBar: React.FC = () => {
     <div className="flex items-center justify-between px-4 h-8 bg-slate-100 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 z-10 shrink-0">
       <div className="flex items-center space-x-4">
         <span>DocCraft Static</span>
-        {isDirty && (
+        {isDocumentDirty && (
           <span className="flex items-center">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5"></span>
             Unsaved changes
