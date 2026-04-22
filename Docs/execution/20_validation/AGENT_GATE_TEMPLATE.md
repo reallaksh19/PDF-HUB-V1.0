@@ -1,17 +1,17 @@
-﻿# Agent Gate Template
+# Agent Gate Template
 
-## Required Automated Gates
-1. `corepack pnpm --filter frontend exec tsc --noEmit`
-2. `corepack pnpm --filter frontend lint`
-3. `corepack pnpm --filter frontend test`
+## Agent: [A1-A8]
+## Scope: [Scope description]
 
-## Required Manual Gates
-- Chrome validation scenario list completed.
-- Edge validation scenario list completed.
-- No silent-skip behavior in owned flows.
+### Automated Checks
+- [ ] `tsc --noEmit` passes
+- [ ] `eslint` passes
+- [ ] unit tests pass
 
-## Submission Checklist
-- [ ] Evidence file updated
-- [ ] All automated commands passed
-- [ ] Manual checks recorded
-- [ ] Rollback criteria evaluated
+### Structural Checks
+- [ ] No `window.prompt` / `window.confirm`
+- [ ] Contracts respected
+
+### Integration Checks
+- [ ] Parity with A1 interfaces
+- [ ] UI feedback contract respected

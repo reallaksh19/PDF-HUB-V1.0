@@ -1,21 +1,7 @@
-﻿# Risk Register
+# Risk Register
 
-## R1: Divergent execution paths
-- Impact: High
-- Mitigation: Route all mutation actions through command dispatcher (A1).
-
-## R2: Document mutation not undoable
-- Impact: High
-- Mitigation: Transaction-based document history (A1) and global regression checks.
-
-## R3: View-mode regressions on large files
-- Impact: High
-- Mitigation: Virtualization, resize-fit recalculation, smoke on 200+ pages (A4, A8).
-
-## R4: Macro UX technically complete but operator-hostile
-- Impact: Medium
-- Mitigation: Validation, dry-run, donor binding, reproducibility metadata (A6).
-
-## R5: Accessibility late defects
-- Impact: High
-- Mitigation: Dedicated a11y lane + keyboard coverage + ARIA verification (A8).
+| ID | Risk | Impact | Likelihood | Mitigation | Status |
+|---|---|---|---|---|---|
+| 01 | Contract drift among parallel agents (A2-A7) | High | Medium | Enforce strict interface change protocol via A0. | Open |
+| 02 | Merge conflicts in shared UI components | Medium | High | Define clear file ownership matrix. | Open |
+| 03 | Performance regression in large documents | High | Medium | Enforce perf budgets and run 200+ page smoke tests. | Open |

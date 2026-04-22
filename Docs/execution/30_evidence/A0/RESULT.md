@@ -1,16 +1,26 @@
-﻿# A0 Result
+# Final Delivery Result
 
-## Summary
-- (pending)
+## Merged-Agent Ledger
+- A1: [Status]
+- A2: [Status]
+- A3: [Status]
+- A4: [Status]
+- A5: [Status]
+- A6: [Status]
+- A7: [Status]
+- A8: [Status]
 
-## Files Changed
-- (pending)
+## Open/Closed Risk List
+- See RISK_REGISTER.md
 
-## Automated Validation
-- (pending)
+## Final Regression Matrix
+- See REGRESSION_CHECKLIST.md
 
-## Manual Validation
-- (pending)
+## Release Readiness Table
+- See GLOBAL_GATE.md
 
-## Risks / Follow-ups
-- (pending)
+## Go/No-Go Decision
+- Status: **TBD**
+
+## Rollback Plan if No-Go
+- See EMERGENCY_ROLLBACK_PLAN.md

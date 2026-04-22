@@ -1,3 +1,4 @@
-﻿# Known Limits
+# Known Limits
 
-- (pending)
+- Backend API integration is out of scope for this release.
+- Very large documents (500+ pages) may still experience degradation.
