@@ -14,6 +14,7 @@ export interface EditorActions {
   setActiveRibbonTab: (tab: RibbonTab) => void;
   setLeftPanelWidth: (width: number) => void;
   setRightPanelWidth: (width: number) => void;
+  setHideResolved: (hideResolved: boolean) => void;
 }
 
 export const useEditorStore = create<EditorState & EditorActions>((set) => ({
@@ -23,10 +24,12 @@ export const useEditorStore = create<EditorState & EditorActions>((set) => ({
   activeRibbonTab: 'file',
   leftPanelWidth: 20,
   rightPanelWidth: 18,
+  hideResolved: false,
   setActiveTool: (activeTool) => set({ activeTool }),
   setSidebarTab: (sidebarTab) => set({ sidebarTab }),
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   setActiveRibbonTab: (activeRibbonTab) => set({ activeRibbonTab }),
   setLeftPanelWidth: (leftPanelWidth) => set({ leftPanelWidth }),
   setRightPanelWidth: (rightPanelWidth) => set({ rightPanelWidth }),
+  setHideResolved: (hideResolved) => set({ hideResolved }),
 }));

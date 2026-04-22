@@ -22,10 +22,23 @@ export interface Point2D {
   y: number;
 }
 
+export interface ReplyThreadItem {
+  id: string;
+  text: string;
+  author: string;
+  createdAt: number;
+}
+
 export interface AnnotationData extends Record<string, unknown> {
   text?: string;
   title?: string;
   content?: string;
+
+  // Review metadata
+  author?: string;
+  reviewStatus?: 'open' | 'resolved' | 'rejected';
+  category?: string;
+  replies?: ReplyThreadItem[];
 
   backgroundColor?: string;
   borderColor?: string;

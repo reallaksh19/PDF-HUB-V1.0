@@ -66,7 +66,7 @@ export const DocumentWorkspace: React.FC = () => {
     openDocument,
   } = useSessionStore();
 
-  const { activeTool } = useEditorStore();
+  const { activeTool, hideResolved } = useEditorStore();
 
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -212,7 +212,15 @@ export const DocumentWorkspace: React.FC = () => {
               scale={viewState.zoom / 100}
               activeTool={activeTool}
               pageAnnotations={annotations
-                .filter((annotation) => annotation.pageNumber === pageNumber)
+                .filter((annotation) => {
+                  if (annotation.pageNumber !== pageNumber) return false;
+                  if (hideResolved && annotation.data.reviewStatus === 'resolved') {
+                    if (!selectedAnnotationIds.includes(annotation.id)) {
+                      return false;
+                    }
+                  }
+                  return true;
+                })
                 .slice()
                 .sort((a, b) => readZIndex(a) - readZIndex(b))}
               selectedAnnotationIds={selectedAnnotationIds}

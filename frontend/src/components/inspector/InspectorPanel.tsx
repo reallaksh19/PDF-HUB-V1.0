@@ -3,7 +3,7 @@ import { useEditorStore } from '@/core/editor/store';
 import { useAnnotationStore } from '@/core/annotations/store';
 import type { AnnotationType, PdfAnnotation } from '@/core/annotations/types';
 import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
-import { Settings, Palette, Info, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Settings, Palette, Info, ChevronRight, ChevronLeft, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 
 const ANNOTATION_TYPES: AnnotationType[] = [
@@ -70,6 +70,7 @@ export const InspectorPanel: React.FC = () => {
     { id: 'properties', icon: Settings, label: 'Properties' },
     { id: 'style', icon: Palette, label: 'Style' },
     { id: 'metadata', icon: Info, label: 'Metadata' },
+    { id: 'review', icon: MessageSquare, label: 'Review' },
   ] as const;
 
   return (
@@ -144,7 +145,69 @@ export const InspectorPanel: React.FC = () => {
         {activeAnnotation && inspectorTab === 'metadata' && (
           <MetadataTab annotation={activeAnnotation} />
         )}
+
+        {activeAnnotation && inspectorTab === 'review' && (
+          <ReviewTab annotation={activeAnnotation} updateAnnotation={updateAnnotation} />
+        )}
       </div>
+    </div>
+  );
+};
+
+const ReviewTab: React.FC<{
+  annotation: PdfAnnotation;
+  updateAnnotation: (id: string, data: Partial<PdfAnnotation>) => void;
+}> = ({ annotation, updateAnnotation }) => {
+  const author = typeof annotation.data.author === 'string' ? annotation.data.author : '';
+  const category = typeof annotation.data.category === 'string' ? annotation.data.category : '';
+  const reviewStatus = typeof annotation.data.reviewStatus === 'string' ? annotation.data.reviewStatus : 'open';
+
+  return (
+    <div className="p-4 space-y-4">
+      <SectionTitle title="Review Data" />
+
+      <LabeledInputShell label="Author">
+        <input
+          type="text"
+          className={baseInputClass}
+          value={author}
+          onChange={(e) =>
+            updateAnnotation(annotation.id, {
+              data: { ...annotation.data, author: e.target.value },
+            })
+          }
+          placeholder="System"
+        />
+      </LabeledInputShell>
+
+      <LabeledSelect
+        label="Status"
+        value={reviewStatus}
+        onChange={(value) =>
+          updateAnnotation(annotation.id, {
+            data: { ...annotation.data, reviewStatus: value },
+          })
+        }
+        options={[
+          { label: 'Open', value: 'open' },
+          { label: 'Resolved', value: 'resolved' },
+          { label: 'Rejected', value: 'rejected' },
+        ]}
+      />
+
+      <LabeledInputShell label="Category">
+        <input
+          type="text"
+          className={baseInputClass}
+          value={category}
+          onChange={(e) =>
+            updateAnnotation(annotation.id, {
+              data: { ...annotation.data, category: e.target.value },
+            })
+          }
+          placeholder="e.g. Needs Work"
+        />
+      </LabeledInputShell>
     </div>
   );
 };
