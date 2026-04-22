@@ -11,6 +11,7 @@ import { useEditorStore } from '@/core/editor/store';
 import { useSessionStore } from '@/core/session/store';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
+import { Virtualizer } from 'virtua';
 
 type TransformState =
   | {
@@ -71,6 +72,24 @@ export const DocumentWorkspace: React.FC = () => {
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [firstPageSize, setFirstPageSize] = React.useState<{ width: number; height: number } | null>(null);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const [containerSize, setContainerSize] = React.useState<{ width: number; height: number } | null>(null);
+
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [pdfDoc]);
 
   const handleBrowse = async () => {
     try {
@@ -119,6 +138,16 @@ export const DocumentWorkspace: React.FC = () => {
 
         previousDoc = doc;
         setPdfDoc(doc);
+
+        try {
+          const firstPage = await doc.getPage(1);
+          const viewport = firstPage.getViewport({ scale: 1 });
+          if (!cancelled) {
+            setFirstPageSize({ width: viewport.width, height: viewport.height });
+          }
+        } catch {
+          // Ignore
+        }
       } catch (err) {
         if (!cancelled) {
           setLoadError(String(err));
@@ -199,59 +228,132 @@ export const DocumentWorkspace: React.FC = () => {
 
   if (!pdfDoc) return null;
 
+  let effectiveScale = viewState.zoom / 100;
+  if (viewState.fitMode === 'width' && containerSize && firstPageSize) {
+    // 48px padding (24px each side)
+    effectiveScale = (containerSize.width - 48) / firstPageSize.width;
+  } else if (viewState.fitMode === 'page' && containerSize && firstPageSize) {
+    // 48px padding vertical and horizontal
+    effectiveScale = Math.min(
+      (containerSize.width - 48) / firstPageSize.width,
+      (containerSize.height - 48) / firstPageSize.height
+    );
+  }
+
+  // Generate pages to render based on viewMode
+  let pagesToRender: number[][] = [];
+  if (viewState.viewMode === 'single') {
+    pagesToRender = [[viewState.currentPage]];
+  } else if (viewState.viewMode === 'two-page') {
+    pagesToRender.push([1]);
+    for (let i = 2; i <= pdfDoc.numPages; i += 2) {
+      const pair = [i];
+      if (i + 1 <= pdfDoc.numPages) pair.push(i + 1);
+      pagesToRender.push(pair);
+    }
+  } else {
+    // continuous
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      pagesToRender.push([i]);
+    }
+  }
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (activeTool === 'hand' && containerRef.current) {
+      containerRef.current.style.cursor = 'grabbing';
+      containerRef.current.setPointerCapture(e.pointerId);
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (activeTool === 'hand' && containerRef.current?.hasPointerCapture(e.pointerId)) {
+      containerRef.current.scrollBy(-e.movementX, -e.movementY);
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (activeTool === 'hand' && containerRef.current?.hasPointerCapture(e.pointerId)) {
+      containerRef.current.style.cursor = '';
+      containerRef.current.releasePointerCapture(e.pointerId);
+    }
+  };
+
+  const renderPage = (pageNumber: number) => {
+    return (
+      <PageSurface
+        key={pageNumber}
+        doc={pdfDoc}
+        pageNumber={pageNumber}
+        scale={effectiveScale}
+        activeTool={activeTool}
+        pageAnnotations={annotations
+          .filter((annotation) => annotation.pageNumber === pageNumber)
+          .slice()
+          .sort((a, b) => readZIndex(a) - readZIndex(b))}
+        selectedAnnotationIds={selectedAnnotationIds}
+        onActivate={() => setPage(pageNumber)}
+        onCreateAnnotation={(annotation) => {
+          addAnnotation(annotation);
+          setSelection([annotation.id]);
+          setActiveAnnotationId(annotation.id);
+        }}
+        onCreateManyAnnotations={(items) => {
+          items.forEach((item) => addAnnotation(item));
+          if (items.length > 0) {
+            const ids = items.map((item) => item.id);
+            setSelection(ids);
+            setActiveAnnotationId(ids[0] ?? null);
+          }
+        }}
+        onSetSingleSelection={(id) => {
+          setSelection([id]);
+          setActiveAnnotationId(id);
+        }}
+        onToggleSelection={(id) => {
+          toggleSelection(id);
+          setActiveAnnotationId(id);
+        }}
+        onSetSelection={(ids) => {
+          setSelection(ids);
+          setActiveAnnotationId(ids[0] ?? null);
+        }}
+        onClearSelection={clearSelection}
+        onCommitAnnotation={(id, patch) => {
+          updateAnnotation(id, patch);
+        }}
+        onCommitManyAnnotations={(updates) => {
+          updateManyAnnotations(updates);
+        }}
+      />
+    );
+  };
+
   return (
-    <div className="flex flex-col h-full bg-slate-200 dark:bg-slate-950 overflow-auto">
-      <div className="min-h-full flex flex-col items-center py-8">
-        {Array.from({ length: pdfDoc.numPages }, (_, index) => {
-          const pageNumber = index + 1;
-          return (
-            <PageSurface
-              key={pageNumber}
-              doc={pdfDoc}
-              pageNumber={pageNumber}
-              scale={viewState.zoom / 100}
-              activeTool={activeTool}
-              pageAnnotations={annotations
-                .filter((annotation) => annotation.pageNumber === pageNumber)
-                .slice()
-                .sort((a, b) => readZIndex(a) - readZIndex(b))}
-              selectedAnnotationIds={selectedAnnotationIds}
-              onActivate={() => setPage(pageNumber)}
-              onCreateAnnotation={(annotation) => {
-                addAnnotation(annotation);
-                setSelection([annotation.id]);
-                setActiveAnnotationId(annotation.id);
-              }}
-              onCreateManyAnnotations={(items) => {
-                items.forEach((item) => addAnnotation(item));
-                if (items.length > 0) {
-                  const ids = items.map((item) => item.id);
-                  setSelection(ids);
-                  setActiveAnnotationId(ids[0] ?? null);
-                }
-              }}
-              onSetSingleSelection={(id) => {
-                setSelection([id]);
-                setActiveAnnotationId(id);
-              }}
-              onToggleSelection={(id) => {
-                toggleSelection(id);
-                setActiveAnnotationId(id);
-              }}
-              onSetSelection={(ids) => {
-                setSelection(ids);
-                setActiveAnnotationId(ids[0] ?? null);
-              }}
-              onClearSelection={clearSelection}
-              onCommitAnnotation={(id, patch) => {
-                updateAnnotation(id, patch);
-              }}
-              onCommitManyAnnotations={(updates) => {
-                updateManyAnnotations(updates);
-              }}
-            />
-          );
-        })}
+    <div
+      ref={containerRef}
+      className={`flex flex-col h-full bg-slate-200 dark:bg-slate-950 overflow-auto outline-none ${
+        activeTool === 'hand' ? 'cursor-grab' : ''
+      }`}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      tabIndex={-1}
+    >
+      <div className="min-h-full flex flex-col items-center py-8 pointer-events-auto">
+        {viewState.viewMode === 'continuous' || viewState.viewMode === 'two-page' ? (
+          <Virtualizer scrollRef={containerRef} overscan={3}>
+            {pagesToRender.map((pair, index) => (
+              <div key={index} className="flex justify-center gap-4 mb-8">
+                {pair.map((pageNumber) => renderPage(pageNumber))}
+              </div>
+            ))}
+          </Virtualizer>
+        ) : (
+          <div className="flex justify-center gap-4 mb-8">
+            {pagesToRender.map((pair) => pair.map((pageNumber) => renderPage(pageNumber)))}
+          </div>
+        )}
       </div>
     </div>
   );
