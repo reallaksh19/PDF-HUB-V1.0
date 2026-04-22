@@ -26,9 +26,18 @@ export interface TextLayerItem {
   fontSize: number;
 }
 
+export interface SearchHitRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface TextSearchHit {
+  id: string;
   pageNumber: number;
-  text: string;
+  snippet: string;
+  rects: SearchHitRect[];
 }
 
 export interface OutlineItem {
@@ -206,9 +215,39 @@ export class PdfRendererAdapter {
 
       for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
         const page = await doc.getPage(pageNumber);
-        const text = await this.getPagePlainText(page);
-        if (text.toLowerCase().includes(normalizedQuery)) {
-          hits.push({ pageNumber, text });
+        const textItems = await this.getPageTextItems(page, 1.0);
+
+        let fullText = "";
+        const itemMap: { start: number; end: number; item: TextLayerItem }[] = [];
+
+        for (const item of textItems) {
+            const start = fullText.length;
+            fullText += item.text + " ";
+            itemMap.push({ start, end: fullText.length - 1, item }); // -1 for the space
+        }
+
+        let idx = fullText.toLowerCase().indexOf(normalizedQuery);
+        let hitCount = 0;
+
+        while (idx !== -1) {
+            const matchEnd = idx + normalizedQuery.length;
+            const hitItems = itemMap.filter(m => m.start < matchEnd && m.end > idx);
+
+            const startSnippetIdx = Math.max(0, idx - 20);
+            const endSnippetIdx = Math.min(fullText.length, matchEnd + 20);
+            let snippet = fullText.substring(startSnippetIdx, endSnippetIdx);
+
+            if (startSnippetIdx > 0) snippet = "..." + snippet;
+            if (endSnippetIdx < fullText.length) snippet = snippet + "...";
+
+            hits.push({
+                id: `hit-${pageNumber}-${hitCount}`,
+                pageNumber,
+                snippet: snippet,
+                rects: hitItems.map(m => ({ x: m.item.x, y: m.item.y, width: m.item.width, height: m.item.height }))
+            });
+            hitCount++;
+            idx = fullText.toLowerCase().indexOf(normalizedQuery, idx + 1);
         }
       }
 

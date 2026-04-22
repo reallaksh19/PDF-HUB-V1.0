@@ -3,17 +3,18 @@ import { v4 as uuidv4 } from 'uuid';
 import { useEditorStore } from '@/core/editor/store';
 import { useAnnotationStore } from '@/core/annotations/store';
 import { useSessionStore } from '@/core/session/store';
+import { useSearchStore } from '@/core/search/store';
 import { loadAppBookmarks, saveAppBookmarks } from '@/core/bookmarks/persistence';
 import type { AppBookmark } from '@/core/bookmarks/types';
 import { PdfRendererAdapter } from '@/adapters/pdf-renderer/PdfRendererAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
 import { MacrosSidebar } from '@/components/sidebar/MacrosSidebar';
+import { SearchPanel } from '@/components/sidebar/SearchPanel';
 import {
   Layers,
   Bookmark,
   MessageSquare,
-  Search,
   ChevronLeft,
   ChevronRight,
   GripVertical,
@@ -91,7 +92,7 @@ export const SidebarPanel: React.FC = () => {
         {sidebarTab === 'thumbnails' && <ThumbnailSidebar />}
         {sidebarTab === 'bookmarks' && <BookmarksSidebar />}
         {sidebarTab === 'comments' && <CommentsSidebar />}
-        {sidebarTab === 'search' && <SearchPanelStub />}
+        {sidebarTab === 'search' && <SearchPanel />}
         {sidebarTab === 'macros' && <MacrosSidebar />}
       </div>
     </div>
@@ -113,6 +114,7 @@ const ThumbnailSidebar: React.FC = () => {
     setSelectedPages,
     toggleSelectedPage,
   } = useSessionStore();
+  const { hits } = useSearchStore();
 
   const [thumbs, setThumbs] = React.useState<ThumbItem[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -195,6 +197,8 @@ const ThumbnailSidebar: React.FC = () => {
         const active = thumb.pageNumber === viewState.currentPage;
         const selected = selectedPages.includes(thumb.pageNumber);
 
+        const pageHits = hits.filter(h => h.pageNumber === thumb.pageNumber).length;
+
         return (
           <div
             key={thumb.pageNumber}
@@ -218,18 +222,25 @@ const ThumbnailSidebar: React.FC = () => {
                   Page {thumb.pageNumber}
                 </span>
               </div>
-              {selected ? (
-                <span className="text-[10px] px-2 py-0.5 rounded bg-blue-600 text-white">
-                  Selected
-                </span>
-              ) : active ? (
-                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-white">
-                  Current
-                </span>
-              ) : null}
+              <div className="flex items-center gap-1">
+                {pageHits > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-400 text-yellow-900 font-bold" title={`${pageHits} hits`}>
+                    {pageHits}
+                  </span>
+                )}
+                {selected ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-blue-600 text-white">
+                    Selected
+                  </span>
+                ) : active ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-white">
+                    Current
+                  </span>
+                ) : null}
+              </div>
             </div>
 
-            <div className="bg-white dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="bg-white dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 overflow-hidden relative">
               <img
                 src={thumb.imageUrl}
                 alt={`Thumbnail for page ${thumb.pageNumber}`}
@@ -445,12 +456,3 @@ const CommentsSidebar: React.FC = () => {
   );
 };
 
-const SearchPanelStub: React.FC = () => {
-  return (
-    <FeaturePlaceholder
-      name="Search"
-      description="Use the search-enabled patch from the previous bundle or wire your search panel here."
-      icon={<Search />}
-    />
-  );
-};
