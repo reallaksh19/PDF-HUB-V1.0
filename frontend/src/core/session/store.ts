@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { DocumentSession, FitMode, ViewMode } from './types';
+import type { DocumentSession, FitMode, ViewMode, SaveExportActionType } from './types';
 
 export interface OpenDocumentPayload {
   documentKey: string;
@@ -11,17 +11,25 @@ export interface OpenDocumentPayload {
 
 export interface SessionActions {
   openDocument: (payload: OpenDocumentPayload) => void;
+  /** @deprecated use command bus to modify document */
   replaceWorkingCopy: (bytes: Uint8Array, pageCount: number) => void;
   setPage: (pageNumber: number) => void;
   setZoom: (zoom: number) => void;
   setFitMode: (fitMode: FitMode) => void;
   setViewMode: (viewMode: ViewMode) => void;
-  setDirty: (isDirty: boolean) => void;
+
+  setDirty: (isDirty: boolean) => void; // backward compatibility
+  setDocumentDirty: (dirty: boolean) => void;
+  setReviewDirty: (dirty: boolean) => void;
+  setSessionDirty: (dirty: boolean) => void;
+
   setSaveHandle: (saveHandle: FileSystemFileHandle | null) => void;
   setSelectedPages: (pages: number[]) => void;
   toggleSelectedPage: (page: number) => void;
   clearSelectedPages: () => void;
   clearDocument: () => void;
+
+  recordExportAction: (type: SaveExportActionType) => void;
 }
 
 function uniqSorted(values: number[]): number[] {
@@ -35,6 +43,9 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
   workingBytes: null,
   pageCount: 0,
   isDirty: false,
+  documentDirty: false,
+  reviewDirty: false,
+  sessionDirty: false,
   saveHandle: null,
   selectedPages: [],
   viewState: {
@@ -52,6 +63,9 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       workingBytes: new Uint8Array(bytes),
       pageCount,
       isDirty: false,
+      documentDirty: false,
+      reviewDirty: false,
+      sessionDirty: false,
       saveHandle,
       selectedPages: [],
       viewState: {
@@ -67,6 +81,8 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       workingBytes: new Uint8Array(bytes),
       pageCount,
       isDirty: true,
+      documentDirty: true,
+      sessionDirty: true,
       selectedPages: state.selectedPages.filter((page) => page >= 1 && page <= pageCount),
       viewState: {
         ...state.viewState,
@@ -107,7 +123,11 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       },
     })),
 
-  setDirty: (isDirty) => set({ isDirty }),
+  setDirty: (isDirty) => set({ isDirty, documentDirty: isDirty, sessionDirty: isDirty }),
+  setDocumentDirty: (documentDirty) => set({ documentDirty, sessionDirty: true, isDirty: true }),
+  setReviewDirty: (reviewDirty) => set({ reviewDirty, sessionDirty: true }),
+  setSessionDirty: (sessionDirty) => set({ sessionDirty }),
+
   setSaveHandle: (saveHandle) => set({ saveHandle }),
 
   setSelectedPages: (pages) =>
@@ -137,6 +157,9 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
       workingBytes: null,
       pageCount: 0,
       isDirty: false,
+      documentDirty: false,
+      reviewDirty: false,
+      sessionDirty: false,
       saveHandle: null,
       selectedPages: [],
       viewState: {
@@ -144,6 +167,14 @@ export const useSessionStore = create<DocumentSession & SessionActions>((set) =>
         zoom: 100,
         fitMode: 'manual',
         viewMode: 'continuous',
+      },
+    }),
+
+  recordExportAction: (type) =>
+    set({
+      lastExportAction: {
+        type,
+        timestamp: Date.now(),
       },
     }),
 }));

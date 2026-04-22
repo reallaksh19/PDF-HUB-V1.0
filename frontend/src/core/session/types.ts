@@ -8,6 +8,8 @@ export interface ViewState {
   viewMode: ViewMode;
 }
 
+export type SaveExportActionType = 'save-working-document' | 'save-session-snapshot' | 'export-flattened-review' | 'download-processed-pdf';
+
 export interface DocumentSession {
   documentKey: string | null;
   fileName: string | null;
@@ -15,7 +17,14 @@ export interface DocumentSession {
   workingBytes: Uint8Array | null;
   pageCount: number;
   isDirty: boolean;
+  documentDirty: boolean;
+  reviewDirty: boolean;
+  sessionDirty: boolean;
   saveHandle: FileSystemFileHandle | null;
   selectedPages: number[];
   viewState: ViewState;
+  lastExportAction?: {
+    type: SaveExportActionType;
+    timestamp: number;
+  };
 }

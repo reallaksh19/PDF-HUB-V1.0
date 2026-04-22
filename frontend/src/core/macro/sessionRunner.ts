@@ -1,5 +1,4 @@
 ﻿import type { MacroRecipe } from './types';
-import { executeMacroRecipe } from './executor';
 import { useSessionStore } from '@/core/session/store';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
 
@@ -17,27 +16,28 @@ export async function runMacroRecipeAgainstSession(
   }
 
   const donorFiles = options?.donorFiles ?? {};
-  const result = await executeMacroRecipe(
-    {
-      workingBytes: session.workingBytes,
-      pageCount: session.pageCount,
-      selectedPages: session.selectedPages,
-      currentPage: session.viewState.currentPage,
-      fileName: session.fileName,
-      donorFiles,
-      now: new Date(),
-    },
-    recipe,
-  );
+  const { dispatchCommand } = await import('@/core/commands/dispatch');
+  const result = await dispatchCommand({
+    payload: { type: 'APPLY_MACRO', recipe, donorFiles },
+    context: { source: 'macro-runner', timestamp: Date.now() },
+  });
 
-  useSessionStore.getState().replaceWorkingCopy(result.workingBytes, result.pageCount);
-  useSessionStore.getState().setSelectedPages(result.selectedPages);
+  if (!result.success) {
+    throw new Error(result.error);
+  }
 
-  if (options?.saveOutputs) {
+  if (options?.saveOutputs && result.extractedOutputs) {
     for (const output of result.extractedOutputs) {
       await FileAdapter.savePdfBytes(output.bytes, output.name, null);
     }
   }
 
-  return result;
+  // To preserve API compatibility where callers might expect `logs` or `selectedPages`
+  return {
+    workingBytes: result.workingBytes!,
+    pageCount: result.pageCount!,
+    selectedPages: [],
+    logs: ['Macro executed via command bus'],
+    extractedOutputs: result.extractedOutputs ?? [],
+  };
 }
