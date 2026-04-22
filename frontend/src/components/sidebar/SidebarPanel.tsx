@@ -9,6 +9,8 @@ import { PdfRendererAdapter } from '@/adapters/pdf-renderer/PdfRendererAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
 import { MacrosSidebar } from '@/components/sidebar/MacrosSidebar';
+import { ThumbnailContextMenu } from './ThumbnailContextMenu';
+
 import {
   Layers,
   Bookmark,
@@ -21,6 +23,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 
 export const SidebarPanel: React.FC = () => {
   const { sidebarTab, leftPanelWidth, setLeftPanelWidth } = useEditorStore();
@@ -118,6 +121,20 @@ const ThumbnailSidebar: React.FC = () => {
   const [loading, setLoading] = React.useState(false);
   const [dragPage, setDragPage] = React.useState<number | null>(null);
 
+  const [contextMenu, setContextMenu] = React.useState<{ x: number; y: number; pageNumber: number } | null>(null);
+  const { annotations } = useAnnotationStore(); // Get annotations for badges
+  // unresolved review count and search hit count are skipped since they depend on components out of scope or not yet implemented
+
+  const handleContextMenu = (e: React.MouseEvent, pageNumber: number) => {
+    e.preventDefault();
+    if (!selectedPages.includes(pageNumber)) {
+      setSelectedPages([pageNumber]);
+      setPage(pageNumber);
+    }
+    setContextMenu({ x: e.clientX, y: e.clientY, pageNumber });
+  };
+
+
   React.useEffect(() => {
     let cancelled = false;
 
@@ -152,10 +169,31 @@ const ThumbnailSidebar: React.FC = () => {
   }, [workingBytes]);
 
   const handleDrop = async (targetPage: number) => {
-    if (!workingBytes || dragPage === null || dragPage === targetPage) return;
-    const nextBytes = await PdfEditAdapter.movePage(workingBytes, dragPage - 1, targetPage - 1);
-    const nextCount = await PdfEditAdapter.countPages(nextBytes);
-    replaceWorkingCopy(nextBytes, nextCount);
+    if (!workingBytes || dragPage === null) return;
+
+    const pagesToMove = selectedPages.includes(dragPage) ? [...selectedPages].sort((a, b) => a - b) : [dragPage];
+    if (pagesToMove.includes(targetPage)) return; // Invalid drop
+
+    let currentBytes = workingBytes;
+    // We iterate backwards to maintain correct insertion index
+    let offset = 0;
+    for (let i = 0; i < pagesToMove.length; i++) {
+        const fromPage = pagesToMove[i];
+        let toPage = targetPage;
+
+        // Adjust indices correctly based on movement direction
+        if (fromPage < targetPage) {
+           toPage = targetPage - 1;
+        } else {
+           toPage = targetPage + offset;
+           offset++;
+        }
+        currentBytes = await PdfEditAdapter.movePage(currentBytes, fromPage - 1, toPage - 1);
+    }
+
+    const nextCount = await PdfEditAdapter.countPages(currentBytes);
+    replaceWorkingCopy(currentBytes, nextCount);
+
     setPage(targetPage);
     setSelectedPages([]);
     setDragPage(null);
@@ -167,6 +205,14 @@ const ThumbnailSidebar: React.FC = () => {
   ) => {
     if (event.metaKey || event.ctrlKey) {
       toggleSelectedPage(pageNumber);
+    } else if (event.shiftKey && selectedPages.length > 0) {
+      const lastSelected = selectedPages[selectedPages.length - 1];
+      const start = Math.min(lastSelected, pageNumber);
+      const end = Math.max(lastSelected, pageNumber);
+      const range = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+      const newSelected = new Set([...selectedPages, ...range]);
+      setSelectedPages(Array.from(newSelected));
+      setPage(pageNumber);
     } else {
       setSelectedPages([pageNumber]);
       setPage(pageNumber);
@@ -185,6 +231,19 @@ const ThumbnailSidebar: React.FC = () => {
 
   return (
     <div className="p-3 space-y-3">
+      {selectedPages.length > 0 && (
+        <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/30 p-2 rounded border border-blue-200 dark:border-blue-800">
+           <span className="text-xs font-medium text-blue-700 dark:text-blue-300">{selectedPages.length} selected</span>
+           <div className="flex gap-1">
+             <Button variant="ghost" size="icon" className="h-6 w-6 text-blue-700 hover:bg-blue-200 dark:text-blue-300 dark:hover:bg-blue-800" onClick={() => {
+                // Dispatch action
+             }}>
+               <Trash2 className="w-3 h-3" />
+             </Button>
+           </div>
+        </div>
+      )}
+
       <div className="text-xs text-slate-500 dark:text-slate-400">
         Ctrl/Cmd-click to multi-select pages.
       </div>
@@ -199,10 +258,26 @@ const ThumbnailSidebar: React.FC = () => {
           <div
             key={thumb.pageNumber}
             draggable
-            onDragStart={() => setDragPage(thumb.pageNumber)}
-            onDragOver={(event) => event.preventDefault()}
+            onDragStart={() => {
+              if (selectedPages.includes(thumb.pageNumber)) {
+                setDragPage(thumb.pageNumber);
+                // Set data transfer for group drag visual if needed
+              } else {
+                setSelectedPages([thumb.pageNumber]);
+                setPage(thumb.pageNumber);
+                setDragPage(thumb.pageNumber);
+              }
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.currentTarget.classList.add('border-t-2', 'border-t-blue-500'); // Insertion indicator
+            }}
+            onDragLeave={(event) => {
+               event.currentTarget.classList.remove('border-t-2', 'border-t-blue-500');
+            }}
             onDrop={() => void handleDrop(thumb.pageNumber)}
             onClick={(event) => handleSelect(event, thumb.pageNumber)}
+            onContextMenu={(e) => handleContextMenu(e, thumb.pageNumber)}
             className={`group rounded-lg border p-2 cursor-pointer transition-colors ${
               selected
                 ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/30'
@@ -218,15 +293,15 @@ const ThumbnailSidebar: React.FC = () => {
                   Page {thumb.pageNumber}
                 </span>
               </div>
-              {selected ? (
-                <span className="text-[10px] px-2 py-0.5 rounded bg-blue-600 text-white">
-                  Selected
-                </span>
-              ) : active ? (
-                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-white">
-                  Current
-                </span>
-              ) : null}
+
+              <div className="flex gap-1">
+                {selected && <Badge variant="success">Selected</Badge>}
+                {active && <Badge variant="default">Current</Badge>}
+                {annotations.filter(a => a.pageNumber === thumb.pageNumber).length > 0 && (
+                    <Badge variant="warning">{annotations.filter(a => a.pageNumber === thumb.pageNumber).length} Annots</Badge>
+                )}
+              </div>
+
             </div>
 
             <div className="bg-white dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -240,6 +315,15 @@ const ThumbnailSidebar: React.FC = () => {
           </div>
         );
       })}
+      {contextMenu && (
+        <ThumbnailContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          pageNumber={contextMenu.pageNumber}
+          selectedPages={selectedPages}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 };
