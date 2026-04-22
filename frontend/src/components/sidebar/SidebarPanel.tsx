@@ -1,26 +1,13 @@
-﻿import React, { useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
+import React, { useState, Suspense } from 'react';
 import { useEditorStore } from '@/core/editor/store';
-import { useAnnotationStore } from '@/core/annotations/store';
-import { useSessionStore } from '@/core/session/store';
-import { loadAppBookmarks, saveAppBookmarks } from '@/core/bookmarks/persistence';
-import type { AppBookmark } from '@/core/bookmarks/types';
-import { PdfRendererAdapter } from '@/adapters/pdf-renderer/PdfRendererAdapter';
-import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
-import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
 import { MacrosSidebar } from '@/components/sidebar/MacrosSidebar';
-import {
-  Layers,
-  Bookmark,
-  MessageSquare,
-  Search,
-  ChevronLeft,
-  ChevronRight,
-  GripVertical,
-  Trash2,
-  Plus,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+
+const ThumbnailSidebar = React.lazy(() => import('./panels/ThumbnailSidebar'));
+const BookmarksSidebar = React.lazy(() => import('./panels/BookmarksSidebar'));
+const CommentsSidebar = React.lazy(() => import('./panels/CommentsSidebar'));
+const SearchPanelStub = React.lazy(() => import('./panels/SearchPanelStub'));
 
 export const SidebarPanel: React.FC = () => {
   const { sidebarTab, leftPanelWidth, setLeftPanelWidth } = useEditorStore();
@@ -87,11 +74,13 @@ export const SidebarPanel: React.FC = () => {
         </Button>
       </div>
 
-      <div className="flex-1 overflow-auto relative">
-        {sidebarTab === 'thumbnails' && <ThumbnailSidebar />}
-        {sidebarTab === 'bookmarks' && <BookmarksSidebar />}
-        {sidebarTab === 'comments' && <CommentsSidebar />}
-        {sidebarTab === 'search' && <SearchPanelStub />}
+      <div className="flex-1 overflow-auto relative flex flex-col">
+        <Suspense fallback={<div className="p-4 text-sm text-slate-500">Loading...</div>}>
+          {sidebarTab === 'thumbnails' && <ThumbnailSidebar />}
+          {sidebarTab === 'bookmarks' && <BookmarksSidebar />}
+          {sidebarTab === 'comments' && <CommentsSidebar />}
+          {sidebarTab === 'search' && <SearchPanelStub />}
+        </Suspense>
         {sidebarTab === 'macros' && <MacrosSidebar />}
       </div>
     </div>

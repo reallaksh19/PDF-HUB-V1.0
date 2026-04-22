@@ -7,6 +7,7 @@ import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 import { useSessionStore } from '@/core/session/store';
 import { useAnnotationStore } from '@/core/annotations/store';
 import { error as logError, warn } from '@/core/logger/service';
+import { useToastStore } from '@/core/toast/store';
 
 export const ToolbarFile: React.FC = () => {
   const {
@@ -19,6 +20,7 @@ export const ToolbarFile: React.FC = () => {
   } = useSessionStore();
 
   const { annotations } = useAnnotationStore();
+  const addToast = useToastStore((state) => state.addToast);
 
   const handleOpen = async () => {
     try {
@@ -55,19 +57,43 @@ export const ToolbarFile: React.FC = () => {
         setSaveHandle(nextHandle);
       }
       setDirty(false);
+      addToast({
+        type: 'success',
+        title: 'Saved Successfully',
+        message: `Saved to ${fileName}`,
+      });
     } catch (err) {
       if (saveHandle && isHandleAccessError(err)) {
         warn('session', 'Existing save handle became invalid, retrying with Save As flow', {
           error: String(err),
         });
-        const nextHandle = await FileAdapter.savePdfBytes(workingBytes, fileName, null);
-        if (nextHandle) {
-          setSaveHandle(nextHandle);
+        try {
+            const nextHandle = await FileAdapter.savePdfBytes(workingBytes, fileName, null);
+            if (nextHandle) {
+              setSaveHandle(nextHandle);
+            }
+            setDirty(false);
+            addToast({
+              type: 'success',
+              title: 'Saved Successfully',
+              message: `Saved to ${fileName}`,
+            });
+        } catch(saveAsErr) {
+            logError('session', 'Failed to save PDF via Save As', { error: String(saveAsErr), fileName });
+            addToast({
+              type: 'error',
+              title: 'Save Failed',
+              message: 'Failed to save the document. Please try again.',
+            });
         }
-        setDirty(false);
         return;
       }
       logError('session', 'Failed to save PDF', { error: String(err), fileName });
+      addToast({
+        type: 'error',
+        title: 'Save Failed',
+        message: 'Failed to save the document. Please try again.',
+      });
     }
   };
 
@@ -79,8 +105,18 @@ export const ToolbarFile: React.FC = () => {
       const exported = await PdfEditAdapter.exportWithAnnotations(workingBytes, annotations);
       const exportName = fileName.replace(/\.pdf$/i, '') + '-annotated.pdf';
       await FileAdapter.savePdfBytes(exported, exportName, null);
+      addToast({
+        type: 'success',
+        title: 'Exported Successfully',
+        message: `Exported to ${exportName}`,
+      });
     } catch (err) {
       logError('session', 'Failed to export annotated PDF', { error: String(err), fileName });
+      addToast({
+        type: 'error',
+        title: 'Export Failed',
+        message: 'Failed to export the document. Please try again.',
+      });
     }
   };
 

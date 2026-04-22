@@ -14,6 +14,7 @@ import { useSessionStore } from '@/core/session/store';
 import { error as logError } from '@/core/logger/service';
 import { BUILTIN_MACROS } from '@/core/macro/builtins';
 import { runMacroRecipeAgainstSession } from '@/core/macro/sessionRunner';
+import { useToastStore } from '@/core/toast/store';
 import type {
   MacroOutputFile,
   MacroRecipe,
@@ -61,6 +62,8 @@ const PLACEHOLDER_STEPS: Array<MacroStep['op']> = [
 
 export const MacrosSidebar: React.FC = () => {
   const { workingBytes, pageCount, viewState } = useSessionStore();
+  const addToast = useToastStore((state) => state.addToast);
+  const updateToast = useToastStore((state) => state.updateToast);
   const [selectedRecipeId, setSelectedRecipeId] = React.useState<string>(
     BUILTIN_RECIPES[0]?.id ?? '',
   );
@@ -114,6 +117,13 @@ export const MacrosSidebar: React.FC = () => {
     setIsRunning(true);
     setRunError(null);
 
+    const toastId = addToast({
+      type: 'progress',
+      title: `Running Macro: ${selectedRecipe.name}`,
+      message: 'Processing document...',
+      progress: 0,
+    });
+
     try {
       const runtimeRecipe = applyOverridesToRecipe(
         selectedRecipe,
@@ -136,12 +146,24 @@ export const MacrosSidebar: React.FC = () => {
           })),
         ]);
       }
+      updateToast(toastId, {
+        type: 'success',
+        title: 'Macro Complete',
+        message: `Generated ${result.extractedOutputs.length} output file(s).`,
+        progress: undefined,
+      });
     } catch (err) {
       const message = String(err);
       setRunError(message);
       logError('macro', 'Macro execution failed in sidebar', {
         recipeId: selectedRecipe.id,
         error: message,
+      });
+      updateToast(toastId, {
+        type: 'error',
+        title: 'Macro Failed',
+        message: err instanceof Error ? err.message : 'An unexpected error occurred.',
+        progress: undefined,
       });
     } finally {
       setIsRunning(false);
