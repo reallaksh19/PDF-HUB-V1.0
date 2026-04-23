@@ -11,7 +11,7 @@ class ResizeObserverMock {
   unobserve() {}
   disconnect() {}
 }
-global.ResizeObserver = ResizeObserverMock as any;
+global.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
 
 // Mock dependencies
 vi.mock('@/core/annotations/persistence', () => ({
@@ -44,7 +44,7 @@ vi.mock('pdfjs-dist', () => ({
 
 // Mock virtua VList since JSDOM might not trigger virtual list intersections properly
 vi.mock('virtua', () => ({
-  VList: ({ children }: any) => <div data-testid="vlist">{children}</div>,
+  VList: ({ children }: { children: React.ReactNode }) => <div data-testid="vlist">{children}</div>,
 }));
 
 describe('DocumentWorkspace', () => {
@@ -77,7 +77,7 @@ describe('DocumentWorkspace', () => {
       fillRect: vi.fn(),
       fillStyle: '',
       setTransform: vi.fn(),
-    }) as any;
+    }) as unknown as typeof HTMLCanvasElement.prototype.getContext;
   });
 
   it('renders continuously', async () => {
