@@ -1,88 +1,57 @@
-﻿# WI — A7 Review Workflow Productization
+﻿# AGENT A7 PROMPT — Review Workflow Depth
 
-## Role
+## Mission
 
-You are **A7**. You own the app’s transformation from annotation canvas into a proper review product.
+You are **A7**. Upgrade the app from annotation editor to review product. Build a proper comments/review index with filters, metadata, replies, and summary export.
 
-## Owned write scope
+## Owned scope
 
-* review/comments sidebar
+* comments/review sidebar
 * review metadata model
-* reply/thread support
-* inspector review fields
 * review summary export
-* hide-resolved integration
+* inspector review fields
+* canvas hide-resolved integration
 
 ## Forbidden scope
 
 * command bus
 * macro executor
-* thumbnail organize behavior
-* core view rendering engine
-
-## Product leap target
-
-Turn markup into **review workflow**.
+* view rendering model
+* thumbnail organize rail
 
 ## Must implement
 
-### 1. Review sidebar
+1. Review-first comments panel:
 
-Features:
+   * group by page
+   * filter by open/resolved/rejected
+   * type badges
+   * jump-to-annotation
+2. Metadata:
 
-* group by page
-* filter by open/resolved/rejected
-* type badge
-* jump-to-annotation
-* bulk resolve/reopen/reject
-* sort by page/date/status
+   * author
+   * createdAt
+   * updatedAt
+   * reviewStatus
+   * optional title/category
+3. Replies/threads in static storage model
+4. Bulk actions:
 
-### 2. Metadata depth
+   * resolve
+   * reopen
+   * reject
+5. Hide-resolved toggle on canvas
+6. Export review summary:
 
-Add:
-
-* author
-* createdAt
-* updatedAt
-* reviewStatus
-* optional title/category/tag
-* reply count
-
-### 3. Thread model
-
-* static storage-safe reply threads
-* reply creation/edit/delete
-* stable linkage to parent annotation
-
-### 4. Canvas/sidebar coherence
-
-* click sidebar row → jump + select + reveal
-* hide resolved toggle on canvas
-* resolved state still visible in sidebar/reporting
-
-### 5. Export review summary
-
-Support:
-
-* JSON
-* readable summary panel
-* counts by status/type/page
-
-## “Next-level” additions
-
-* review priority/severity
-* assignee hook
-* due-date hook
-* summary heatmap by page
-* unresolved review density badges in thumbnails
-* “open items only” mode
+   * JSON
+   * human-readable summary view
 
 ## Required UX rules
 
-* sidebar is authoritative review index
-* replies never orphan
-* resolved items are easy to find even when hidden on canvas
-* no mismatch between review status badge and filter results
+* sidebar is the source of truth for review navigation
+* resolved items can be found even when hidden on canvas
+* clicking a sidebar row jumps and selects annotation reliably
+* thread replies remain tied to parent review item
 
 ## Strict pass tests
 
@@ -92,27 +61,21 @@ Automated:
 * `corepack pnpm --filter frontend lint`
 * `corepack pnpm --filter frontend test -- review comments inspector`
 
-Required tests:
+Required test cases:
 
 * filter by status
 * jump-to-annotation
 * bulk resolve/reopen
 * hide-resolved behavior
+* summary export shape
 * reply thread persistence
-* review summary export
 
 Manual validations:
 
-* create note → reply → resolve → filter → reopen
-* row click always navigates correctly
-* exported review summary matches sidebar counts
+* create note, resolve it, filter it, reopen it
+* click sidebar row to jump
+* summary export reflects current review state
 
 Evidence:
 
 * `Docs/execution/30_evidence/A7/RESULT.md`
-
-Rollback criteria:
-
-* sidebar remains a flat annotation dump
-* replies break navigation
-* hide-resolved causes discoverability loss

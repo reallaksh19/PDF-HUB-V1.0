@@ -19,22 +19,6 @@ type HeaderFooterOptions = {
   enableDateToken: boolean;
 };
 
-type DrawTextOptions = {
-  pages: number[];
-  text: string;
-  x: number;
-  y: number;
-  fontSize: number;
-  color: string;
-  opacity: number;
-  align: 'left' | 'center' | 'right';
-  fileName: string;
-  now: Date;
-  enablePageNumberToken: boolean;
-  enableFileNameToken: boolean;
-  enableDateToken: boolean;
-};
-
 function normalizePageIndices(pageIndices: number[]): number[] {
   return Array.from(new Set(pageIndices)).sort((a, b) => a - b);
 }
@@ -85,11 +69,6 @@ function resolveHeaderFooterTokens(
     output = output.replaceAll('{date}', values.date);
     output = output.replaceAll('{{date}}', values.date);
   }
-
-  // Also support generic $TOKEN syntax for new features
-  output = output.replaceAll('$PAGE_NUMBER', String(values.page));
-  output = output.replaceAll('$TOTAL_PAGES', String(values.pages));
-  output = output.replaceAll('$DATE', values.date);
 
   return output;
 }
@@ -335,7 +314,6 @@ export class PdfEditAdapter {
       const page = pdfDoc.getPage(pageIndex);
       const pageHeight = page.getHeight();
 
-      // PDF-lib uses bottom-left origin. y is converted from top-left.
       const drawY = pageHeight - options.y - drawHeight;
 
       page.drawImage(image, {
@@ -367,11 +345,9 @@ export class PdfEditAdapter {
       enableFileNameToken: boolean;
       enableDateToken: boolean;
       textAlign: 'left' | 'center' | 'right' | 'justify';
-      // Future-proofing: font, weight, etc. can map to StandardFonts or custom
     }
   ): Promise<Uint8Array> {
     const pdfDoc = await PDFDocument.load(baseBytes);
-    // Basic helvetica for now, could expand to bold/italic based on fontWeight/fontStyle
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const totalPages = pdfDoc.getPageCount();
 
@@ -392,7 +368,6 @@ export class PdfEditAdapter {
 
       const maxWidth = options.width ?? (width - options.x);
 
-      // Simple text wrapping simulation
       const words = text.split(' ');
       const lines: string[] = [];
       let currentLine = words[0];
@@ -410,7 +385,6 @@ export class PdfEditAdapter {
       }
       lines.push(currentLine);
 
-      // PDF-lib uses bottom-left origin.
       let drawY = height - options.y - options.fontSize;
 
       for (const line of lines) {
@@ -432,7 +406,7 @@ export class PdfEditAdapter {
           maxWidth
         });
 
-        drawY -= options.fontSize * 1.2; // roughly 1.2 line height
+        drawY -= options.fontSize * 1.2;
       }
     }
 
@@ -477,49 +451,6 @@ export class PdfEditAdapter {
       page.drawText(text, {
         x,
         y,
-        font,
-        size: options.fontSize,
-        color: hexToRgb(options.color),
-        opacity: options.opacity,
-      });
-    }
-
-    return await pdfDoc.save();
-  }
-
-  static async drawTextOnPages(
-    baseBytes: Uint8Array,
-    options: DrawTextOptions,
-  ): Promise<Uint8Array> {
-    const pdfDoc = await PDFDocument.load(baseBytes);
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const totalPages = pdfDoc.getPageCount();
-
-    for (const pageIndex of options.pages) {
-      const page = pdfDoc.getPage(pageIndex);
-      const width = page.getWidth();
-
-      const text = resolveHeaderFooterTokens(options.text, {
-        page: pageIndex + 1,
-        pages: totalPages,
-        file: options.fileName,
-        date: options.now.toLocaleDateString(),
-        enablePageNumberToken: options.enablePageNumberToken,
-        enableFileNameToken: options.enableFileNameToken,
-        enableDateToken: options.enableDateToken,
-      });
-
-      const textWidth = font.widthOfTextAtSize(text, options.fontSize);
-      const x =
-        options.align === 'left'
-          ? options.x
-          : options.align === 'center'
-          ? (width - textWidth) / 2
-          : width - options.x - textWidth;
-
-      page.drawText(text, {
-        x,
-        y: options.y,
         font,
         size: options.fontSize,
         color: hexToRgb(options.color),
@@ -585,28 +516,14 @@ export class PdfEditAdapter {
         continue;
       }
 
-      if (annotation.type === 'rectangle') {
+      if (annotation.type === 'shape') {
         page.drawRectangle({
           x,
           y,
           width: annotation.rect.width,
           height: annotation.rect.height,
-          borderWidth: typeof annotation.data.strokeWidth === 'number' ? annotation.data.strokeWidth : (typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1),
+          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
           borderColor,
-          color: backgroundColor,
-        });
-        continue;
-      }
-
-      if (annotation.type === 'ellipse') {
-        page.drawEllipse({
-          x: x + annotation.rect.width / 2,
-          y: y + annotation.rect.height / 2,
-          xScale: annotation.rect.width / 2,
-          yScale: annotation.rect.height / 2,
-          borderWidth: typeof annotation.data.strokeWidth === 'number' ? annotation.data.strokeWidth : (typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1),
-          borderColor,
-          color: backgroundColor,
         });
         continue;
       }

@@ -123,7 +123,6 @@ export const MacrosSidebar: React.FC = () => {
     if (!selectedRecipe) return;
     const isCustom = selectedRecipe.id.startsWith('custom_');
     if (!isCustom) {
-      // Create a copy first if it's a builtin
       const newPreset: MacroRecipe = {
         ...selectedRecipe,
         id: `custom_${Date.now()}`,
@@ -133,7 +132,7 @@ export const MacrosSidebar: React.FC = () => {
       setSelectedRecipeId(newPreset.id);
     } else {
       updatePreset(selectedRecipe.id, {
-        steps: [...selectedRecipe.steps, { op: 'inject_rich_text', selector: { mode: 'all' }, x: 100, y: 100, text: 'New Text', fontSize: 12 }]
+        steps: [...selectedRecipe.steps, { op: 'draw_text_on_pages', selector: { mode: 'all' }, x: 100, y: 100, text: 'New Text', fontSize: 12 }]
       });
     }
   };

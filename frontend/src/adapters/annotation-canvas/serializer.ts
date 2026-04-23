@@ -12,10 +12,11 @@ type KonvaNodeAttributes = Record<string, unknown> & {
 };
 
 export const deserializeKonvaNodeToAnnotation = (nodeAttrs: KonvaNodeAttributes, className: string): Omit<PdfAnnotation, 'id' | 'pageNumber' | 'createdAt' | 'updatedAt'> => {
-  let type: AnnotationType = 'shape';
+  let type: AnnotationType = 'rectangle';
   if (className === 'Text') type = 'textbox';
   if (className === 'Line') type = 'freehand';
-  if (className === 'Rect') type = nodeAttrs.name === 'highlight' ? 'highlight' : 'shape';
+  if (className === 'Ellipse') type = 'ellipse';
+  if (className === 'Rect') type = nodeAttrs.name === 'highlight' ? 'highlight' : 'rectangle';
 
   return {
     type,

@@ -1,83 +1,57 @@
-﻿# WI — A4 View Modes, Fit Modes, Hand Tool, Large-Doc Rendering
+﻿# AGENT A4 PROMPT — View Modes as Real Rendering Models
 
-## Role
+## Mission
 
-You are **A4**. You own runtime rendering behavior for how documents are viewed.
+You are **A4**. Turn view controls from dead state into actual rendering behavior. Implement continuous, single-page, two-page, fit-width, fit-page, and working hand/pan mode.
 
-## Owned write scope
+## Owned scope
 
-* workspace layout/rendering
-* page virtualization
-* view mode behavior
-* fit mode behavior
-* hand tool behavior
-* page centering/scroll restoration policy
+* `frontend/src/components/workspace/**`
+* `frontend/src/components/toolbar/ToolbarView.tsx`
+* `frontend/src/core/session/store.ts` view-related integration
+* rendering layout model
 
 ## Forbidden scope
 
-* macro panel
-* search sidebar logic
+* macro UI
+* search panel
 * review sidebar logic
-* command history internals
-
-## Product leap target
-
-Turn view controls from dead state into a **robust document viewport system**.
+* command history logic
 
 ## Must implement
 
-### 1. Continuous mode
+1. Continuous mode:
 
-* virtualized page list
-* stable scroll
-* bounded concurrent page renders
-* render-window tuning hooks
+   * virtualized page list
+   * stable scroll behavior
+2. Single-page mode:
 
-### 2. Single-page mode
+   * only current page rendered
+   * optional neighbor prefetch
+3. Two-page mode:
 
-* only current page shown
-* neighbor prefetch optional
-* predictable keyboard/page navigation
+   * proper spread pairing
+   * first-page handling
+   * centered spread layout
+4. Fit modes:
 
-### 3. Two-page mode
+   * fit width
+   * fit page
+   * recompute on resize
+5. Hand tool:
 
-* correct spread pairing
-* first-page treatment
-* centered spread layout
-* page gap policy
+   * click-drag pan
+   * cursor feedback
+6. Mode transitions:
 
-### 4. Fit modes
-
-* fit width
-* fit page
-* recompute on container resize
-* respect current mode
-
-### 5. Hand tool
-
-* drag-to-pan
-* cursor state
-* no accidental annotation interactions when active
-
-### 6. Scroll/page restoration
-
-* preserve user context when changing mode
-* maintain stable page anchor where possible
-
-## “Next-level” additions
-
-* mini-map hook
-* focus mode / distraction-free mode
-* presentation mode hook
-* viewport state memory per document
-* smooth center-on-selection API for search/comments
+   * preserve context
+   * restore scroll/page focus sensibly
 
 ## Performance requirements
 
-* large docs: no full rerender storm
-* page virtualization required
-* memoize page surfaces
-* avoid duplicate thumbnail/render pipelines where possible
+* virtualization policy for large docs
+* bounded render churn
+* no full rerender storm on mode toggle
 
 ## Strict pass tests
 
@@ -87,33 +61,20 @@ Automated:
 * `corepack pnpm --filter frontend lint`
 * `corepack pnpm --filter frontend test -- view workspace`
 
-Required tests:
+Required test cases:
 
-* mode switch changes layout
-* fit width/page affect zoom
+* viewMode changes layout
+* fitMode changes zoom behavior
 * hand tool pans
-* current page preserved across mode changes
+* mode switch preserves current page
 * resize recomputes fit correctly
-
-Performance validations:
-
-* 200+ page smoke
-* repeated mode toggles
-* rapid resize smoke
 
 Manual validations:
 
-* continuous feels continuous
-* two-page feels like spreads, not a hack
-* single-page mode does not leak other pages
-* mode switching does not feel jumpy
+* 200+ page PDF still responsive
+* two-page spreads render correctly
+* switching from continuous to single to two-page does not lose place badly
 
 Evidence:
 
 * `Docs/execution/30_evidence/A4/RESULT.md`
-
-Rollback criteria:
-
-* view controls still only change store state
-* virtualized mode breaks page operations
-* pan conflicts with annotation tools

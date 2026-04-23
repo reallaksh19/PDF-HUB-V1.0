@@ -32,4 +32,3 @@
 ## Known Risks
 - Actual "donor file selection UX" is heavily mocked in the preflight for this milestone, real implementation requires drag-and-drop bindings or an auxiliary dialog mapping.
 - UI doesn't yet support fully custom scratchpad recipes (adding/removing steps dynamically), just preset parameter overrides.
-A6 Annotations Model refactor to support explicit shapes + dynamic properties in the Inspector Panel, Custom recipe builder UI implementation via Zustand store, macro Advanced placements primitives, and headless external API support.

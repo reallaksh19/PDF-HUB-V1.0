@@ -17,7 +17,5 @@ vi.mock('@/components/sidebar/SidebarPanel', () => ({
 
 test('renders Workspace page by default', () => {
   render(<App />);
-  expect(
-    screen.getByText(/PDF workbench for review, organize, and macro actions/i),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/Open a PDF to begin/i)).toBeInTheDocument();
 });

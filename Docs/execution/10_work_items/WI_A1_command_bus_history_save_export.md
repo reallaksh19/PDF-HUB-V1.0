@@ -1,147 +1,83 @@
-﻿# WI — A1 Command Bus + Document History + Save/Export Truth
+﻿# AGENT A1 PROMPT — Single Command Layer + Document Mutation History + Save/Export Semantics
 
-## Role
+## Mission
 
-You are **A1**. You own the architectural spine. All document/page actions must route through your layer. You also own document-mutation undo/redo and the semantic truth of save/export/session behavior.
+You are **A1**. Build the single source of truth for all page/document actions. Eliminate multi-path execution drift. Add product-safe undo/redo for document mutations. Clarify save/export/session semantics in code and state.
 
-## Owned write scope
+## Owned scope
 
 * `frontend/src/core/commands/**`
 * `frontend/src/core/document-history/**`
 * `frontend/src/core/session/types.ts`
 * `frontend/src/core/session/store.ts`
-* integration adapters used by toolbar, thumbnail menu, macro runner, keyboard shortcuts
-* save/export/session action contracts
+* integration adapters used by toolbar/sidebar/macro entrypoints
+* file/save/export action contracts
 
 ## Forbidden scope
 
 * search UI
-* thumbnail UI layout
-* annotation rendering
+* thumbnail UI
 * macro visual builder
-* review thread UI
-
-## Product leap target
-
-Turn the app from “several controls that mutate a PDF” into a **transactional document editor**.
+* annotation rendering rules
+* comments/review threading
 
 ## Must implement
 
-### 1. Typed command system
+1. Typed command contract:
 
-Define:
+   * `DocumentCommand`
+   * `CommandSource`
+   * `CommandPayload`
+   * `CommandResult`
+   * `CommandContext`
+2. Single dispatcher:
 
-* `DocumentCommand`
-* `DocumentCommandId`
-* `CommandSource`
-* `CommandPayload`
-* `CommandContext`
-* `CommandResult`
-* `CommandError`
-* `CommandTelemetryEvent`
+   * toolbar uses dispatcher
+   * thumbnail context menu uses dispatcher
+   * macro runner uses dispatcher
+   * keyboard shortcuts use dispatcher
+3. Document mutation history:
 
-Support commands for:
+   * rotate pages
+   * reorder pages
+   * extract/split/delete
+   * insert/replace page
+   * header/footer
+   * batch text
+   * macro-applied mutations
+4. Session/save/export model:
 
-* rotate pages
-* reorder pages
-* duplicate pages
-* extract pages
-* split pages
-* delete pages
-* insert blank page
-* replace page
-* apply header/footer
-* apply page numbers
-* batch text draw
-* macro recipe run
-* export flattened review copy
-* save working document
-* save session snapshot
+   * explicit “save working document”
+   * explicit “save session snapshot”
+   * explicit “export flattened review copy”
+   * explicit “download processed PDF”
+5. Dirty-state semantics:
 
-### 2. Dispatcher
+   * document dirty
+   * review dirty
+   * session dirty
+6. Prevent direct `replaceWorkingCopy` style mutation from UI except through dispatcher-approved flows.
 
-Create one dispatcher that is the only valid entrypoint for:
+## Required file outputs
 
-* toolbar actions
-* thumbnail context menu actions
-* macro actions
-* keyboard shortcuts
-* command palette hooks
+Create/update:
 
-### 3. Document-mutation history
+* `frontend/src/core/commands/types.ts`
+* `frontend/src/core/commands/dispatch.ts`
+* `frontend/src/core/document-history/types.ts`
+* `frontend/src/core/document-history/store.ts`
+* `frontend/src/core/document-history/transactions.ts`
+* `frontend/src/core/session/types.ts`
+* `frontend/src/core/session/store.ts`
 
-Implement transaction-safe undo/redo for:
+## Required validations
 
-* page operations
-* page content mutations
-* macro-driven document mutations
+You must prove:
 
-History requirements:
-
-* reversible transaction object
-* human-readable action label
-* timestamp
-* source surface
-* optional grouped transaction
-* rollback-safe error path
-
-### 4. Save/export/session semantics
-
-Build an explicit taxonomy:
-
-* **Save working document**
-* **Save session snapshot**
-* **Export flattened review copy**
-* **Download processed PDF**
-
-Produce a truth table that states exactly what each contains:
-
-* page mutations
-* annotations
-* review status
-* bookmarks/custom nav
-* UI state
-* temporary macro logs
-
-### 5. Dirty-state model
-
-Track separately:
-
-* document dirty
-* review dirty
-* session dirty
-
-### 6. Telemetry/debug hooks
-
-Add structured events for:
-
-* command start
-* command success
-* command failure
-* elapsed time
-* payload scope
-* source surface
-
-No analytics service required; local debug/event sink is enough.
-
-## “Next-level” additions
-
-* action ledger panel hook point
-* command replay support for supported operations
-* grouped transaction batching
-* command-idempotency guards where appropriate
-* destructive command preview summary object
-* future-compatible command palette schema
-
-## Required deliverables
-
-* full command type system
-* command registry
-* dispatcher
-* document history store
-* transaction serializers
-* save/export truth table doc
-* migration patch replacing direct document mutation from UI
+* same rotate command produces identical result from toolbar, macro, and thumbnail menu
+* undo reverses document mutation
+* redo reapplies document mutation
+* save/export actions are typed and distinguishable
 
 ## Strict pass tests
 
@@ -151,36 +87,28 @@ Automated:
 * `corepack pnpm --filter frontend lint`
 * `corepack pnpm --filter frontend test -- core/commands core/document-history core/session`
 
-Required tests:
+Required test cases:
 
-* toolbar/macro/thumbnail dispatch parity
+* command dispatch parity
+* transaction push/pop
 * undo/redo for rotate
-* undo/redo for header/footer
+* undo/redo for header/footer apply
 * undo/redo for split/delete
-* transaction grouping
-* save/export truth-table expectations
+* save/export action typing
 * dirty-state transitions
-* failure path leaves history consistent
 
-Negative tests:
+Structural gates:
 
-* malformed payload rejected
-* unsupported command source rejected
-* dry-run command cannot mutate document state
+* no UI component directly mutates document bytes except through dispatcher
+* no duplicate command handlers for same action
 
 Manual validations:
 
-* apply rotate from 3 surfaces, identical result
-* undo/redo document mutation
-* export flattened review copy is distinguishable from save working doc
-* no stale dirty-state after save/export
+* rotate → undo → redo
+* add page numbers → undo → redo
+* apply header/footer from macro and from UI, same output
+* save working document does not falsely imply flattened review export
 
 Evidence:
 
 * `Docs/execution/30_evidence/A1/RESULT.md`
-
-Rollback criteria:
-
-* any UI path still mutates document bytes directly
-* undo/redo corrupts working bytes
-* save/export labels remain semantically ambiguous
