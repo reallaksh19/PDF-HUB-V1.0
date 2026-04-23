@@ -54,6 +54,26 @@ export type MacroStep =
       pageNumberToken?: boolean;
       fileNameToken?: boolean;
       dateToken?: boolean;
+    }
+  | {
+      op: 'insert_image';
+      donorFileId: string;
+      selector: PageSelector;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }
+  | {
+      op: 'insert_rich_text';
+      selector: PageSelector;
+      text: string;
+      x: number;
+      y: number;
+      fontSize: number;
+      color?: string;
+      fontFamily?: string;
+      align?: 'left' | 'center' | 'right';
     };
 
 export interface MacroRecipe {
@@ -79,6 +99,8 @@ export interface MacroOutputFile {
 }
 
 export interface MacroRunResult {
+  success: boolean;
+  errors: string[];
   workingBytes: Uint8Array;
   pageCount: number;
   selectedPages: number[];

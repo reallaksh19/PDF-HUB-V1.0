@@ -64,6 +64,11 @@ function resolveHeaderFooterTokens(
     output = output.replaceAll('{date}', values.date);
   }
 
+  // Also support generic $TOKEN syntax for new features
+  output = output.replaceAll('$PAGE_NUMBER', String(values.page));
+  output = output.replaceAll('$TOTAL_PAGES', String(values.pages));
+  output = output.replaceAll('$DATE', values.date);
+
   return output;
 }
 
@@ -273,6 +278,92 @@ export class PdfEditAdapter {
     const copied = await out.copyPages(srcDoc, order);
     copied.forEach((page) => out.addPage(page));
     return await out.save();
+  }
+
+  static async insertImage(
+    baseBytes: Uint8Array,
+    imageBytes: Uint8Array,
+    pages: number[],
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+
+    // Auto-detect format based on magic bytes (simplified)
+    const isPng = imageBytes[0] === 0x89 && imageBytes[1] === 0x50;
+    const image = isPng
+      ? await pdfDoc.embedPng(imageBytes)
+      : await pdfDoc.embedJpg(imageBytes);
+
+    for (const pageIndex of pages) {
+      if (pageIndex < 0 || pageIndex >= pdfDoc.getPageCount()) continue;
+      const page = pdfDoc.getPage(pageIndex);
+      const pageHeight = page.getHeight();
+
+      // PDF coordinates are bottom-left origin, convert from top-left
+      page.drawImage(image, {
+        x,
+        y: pageHeight - y - height,
+        width,
+        height,
+      });
+    }
+
+    return await pdfDoc.save();
+  }
+
+  static async insertRichText(
+    baseBytes: Uint8Array,
+    pages: number[],
+    text: string,
+    x: number,
+    y: number,
+    fontSize: number,
+    color?: string,
+    fontFamily?: string, // Ignored for now, defaults to Helvetica
+    align?: 'left' | 'center' | 'right',
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    for (const pageIndex of pages) {
+      if (pageIndex < 0 || pageIndex >= pdfDoc.getPageCount()) continue;
+      const page = pdfDoc.getPage(pageIndex);
+      const pageHeight = page.getHeight();
+      const pageWidth = page.getWidth();
+
+      // Simple multiline support
+      const lines = text.split('\n');
+
+      let currentY = pageHeight - y - fontSize; // Convert to bottom-left origin
+
+      for (const line of lines) {
+        let drawX = x;
+        if (align === 'center' || align === 'right') {
+          const textWidth = font.widthOfTextAtSize(line, fontSize);
+          if (align === 'center') {
+            // Assume x is the bounding box center or we just center on page if x=0
+            drawX = x === 0 ? (pageWidth - textWidth) / 2 : x - textWidth / 2;
+          } else if (align === 'right') {
+            drawX = x === 0 ? pageWidth - textWidth : x - textWidth;
+          }
+        }
+
+        page.drawText(line, {
+          x: drawX,
+          y: currentY,
+          font,
+          size: fontSize,
+          color: hexToRgb(color || '#000000'),
+        });
+
+        currentY -= (fontSize * 1.2); // Line height
+      }
+    }
+
+    return await pdfDoc.save();
   }
 
   static async addHeaderFooterText(
