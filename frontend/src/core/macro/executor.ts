@@ -410,6 +410,91 @@ export async function executeMacroRecipe(
         break;
       }
 
+      case 'insert_image': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped insert_image: no pages selected');
+          break;
+        }
+
+        let imageBytes: Uint8Array | undefined;
+        let mimeType: 'image/jpeg' | 'image/png' = 'image/png';
+
+        if (step.donorFileId && ctx.donorFiles[step.donorFileId]) {
+           imageBytes = ctx.donorFiles[step.donorFileId];
+           // Simple detection, assuming fallback to png if not matching jpeg magic numbers
+           if (imageBytes[0] === 0xff && imageBytes[1] === 0xd8) {
+             mimeType = 'image/jpeg';
+           }
+        } else if (step.base64Image) {
+          const match = step.base64Image.match(/^data:(image\/[a-zA-Z]+);base64,(.*)$/);
+          if (match) {
+            mimeType = match[1] === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+            const binaryString = atob(match[2]);
+            imageBytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                imageBytes[i] = binaryString.charCodeAt(i);
+            }
+          }
+        }
+
+        if (!imageBytes) {
+          logs.push('Skipped insert_image: no valid image data found');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.insertImage(workingBytes, {
+          pages: pages.map((p) => p - 1),
+          imageBytes,
+          mimeType,
+          x: step.x,
+          y: step.y,
+          width: step.width,
+          height: step.height,
+          scale: step.scale,
+        });
+
+        logs.push(`Inserted image to pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'inject_rich_text': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped inject_rich_text: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.injectRichText(workingBytes, {
+          pages: pages.map((p) => p - 1),
+          text: step.text,
+          x: step.x,
+          y: step.y,
+          width: step.width,
+          height: step.height,
+          fontSize: step.fontSize,
+          color: step.color ?? '#0f172a',
+          opacity: step.opacity ?? 1,
+          textAlign: step.textAlign ?? 'left',
+          fileName: ctx.fileName,
+          now: ctx.now,
+          enablePageNumberToken: step.pageNumberToken ?? true,
+          enableFileNameToken: step.fileNameToken ?? false,
+          enableDateToken: step.dateToken ?? false,
+        });
+
+        logs.push(`Injected rich text to pages: ${pages.join(', ')}`);
+        break;
+      }
+
       default:
         assertNever(step);
     }

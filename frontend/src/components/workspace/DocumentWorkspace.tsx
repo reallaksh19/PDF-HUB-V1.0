@@ -1966,9 +1966,7 @@ function readZIndex(annotation: PdfAnnotation): number {
 
 function renderVisibleContent(annotation: PdfAnnotation): React.ReactNode {
   if (annotation.type === 'highlight') return null;
-  if (annotation.type === 'underline') return null;
-  if (annotation.type === 'strikeout') return null;
-  if (annotation.type === 'shape') return null;
+  if (annotation.type === 'rectangle' || annotation.type === 'ellipse') return null;
   if (annotation.type === 'line' || annotation.type === 'arrow') return null;
 
   const text = readText(annotation);
@@ -1988,6 +1986,8 @@ function annotationVisualStyle(
   const backgroundColor =
     typeof annotation.data.backgroundColor === 'string'
       ? annotation.data.backgroundColor
+      : typeof annotation.data.fillColor === 'string'
+      ? annotation.data.fillColor
       : annotation.type === 'highlight'
       ? '#fde047'
       : annotation.type === 'sticky-note'
@@ -2001,13 +2001,9 @@ function annotationVisualStyle(
   const borderColor =
     typeof annotation.data.borderColor === 'string'
       ? annotation.data.borderColor
-      : annotation.type === 'underline'
-      ? '#2563eb'
-      : annotation.type === 'strikeout'
-      ? '#b91c1c'
-      : annotation.type === 'sticky-note'
-      ? '#a16207'
-      : annotation.type === 'shape'
+      : typeof annotation.data.strokeColor === 'string'
+      ? annotation.data.strokeColor
+      : (annotation.type === 'rectangle' || annotation.type === 'ellipse')
       ? '#3b82f6'
       : annotation.type === 'stamp'
       ? '#ef4444'
@@ -2023,26 +2019,42 @@ function annotationVisualStyle(
   const borderWidth =
     typeof annotation.data.borderWidth === 'number'
       ? annotation.data.borderWidth
-      : annotation.type === 'underline' || annotation.type === 'strikeout'
-      ? 0
-      : annotation.type === 'shape'
+      : typeof annotation.data.strokeWidth === 'number'
+      ? annotation.data.strokeWidth
+      : (annotation.type === 'rectangle' || annotation.type === 'ellipse')
       ? 2
       : 1;
 
-  return {
-    backgroundColor,
-    border: `${selected ? Math.max(borderWidth, 2) : borderWidth}px solid ${
-      selected ? '#2563eb' : borderColor
-    }`,
-    color: textColor,
-    opacity:
+  const opacity =
       typeof annotation.data.opacity === 'number'
         ? annotation.data.opacity
         : annotation.type === 'highlight'
         ? 0.38
-        : 0.9,
+        : 0.9;
+
+  let borderRadius = 2;
+  if (annotation.type === 'comment') borderRadius = 6;
+  if (annotation.type === 'ellipse') borderRadius = 9999;
+  if (typeof annotation.data.cornerRadius === 'number') borderRadius = annotation.data.cornerRadius;
+
+  return {
+    backgroundColor,
+    border: `${selected ? Math.max(borderWidth, 2) : borderWidth}px ${annotation.data.strokeStyle || 'solid'} ${
+      selected ? '#2563eb' : borderColor
+    }`,
+    color: textColor,
+    opacity,
     boxShadow: selected ? '0 0 0 2px rgba(37, 99, 235, 0.18)' : undefined,
-    borderRadius: annotation.type === 'comment' ? 6 : 2,
+    borderRadius,
+    fontWeight: annotation.data.fontWeight,
+    fontStyle: annotation.data.fontStyle,
+    textDecoration: annotation.data.textDecoration,
+    fontFamily: typeof annotation.data.fontFamily === 'string' ? annotation.data.fontFamily : 'inherit',
+    lineHeight: typeof annotation.data.lineHeight === 'number' ? annotation.data.lineHeight : 'normal',
+    textAlign:
+      typeof annotation.data.textAlign === 'string'
+        ? (annotation.data.textAlign as any)
+        : 'left',
   };
 }
 

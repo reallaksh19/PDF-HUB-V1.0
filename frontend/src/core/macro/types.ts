@@ -57,23 +57,33 @@ export type MacroStep =
     }
   | {
       op: 'insert_image';
-      donorFileId: string;
       selector: PageSelector;
       x: number;
       y: number;
-      width: number;
-      height: number;
+      width?: number;
+      height?: number;
+      scale?: number;
+      base64Image?: string;
+      donorFileId?: string; // fallback or preferred over base64
     }
   | {
-      op: 'insert_rich_text';
+      op: 'inject_rich_text';
       selector: PageSelector;
-      text: string;
       x: number;
       y: number;
+      width?: number;
+      height?: number;
+      text: string;
       fontSize: number;
-      color?: string;
       fontFamily?: string;
-      align?: 'left' | 'center' | 'right';
+      fontWeight?: string;
+      fontStyle?: string;
+      color?: string;
+      opacity?: number;
+      textAlign?: 'left' | 'center' | 'right' | 'justify';
+      pageNumberToken?: boolean;
+      fileNameToken?: boolean;
+      dateToken?: boolean;
     };
 
 export interface MacroRecipe {
@@ -99,12 +109,9 @@ export interface MacroOutputFile {
 }
 
 export interface MacroRunResult {
-  success: boolean;
-  errors: string[];
   workingBytes: Uint8Array;
   pageCount: number;
   selectedPages: number[];
   logs: string[];
   extractedOutputs: MacroOutputFile[];
-  outputs?: MacroOutputFile[];
 }

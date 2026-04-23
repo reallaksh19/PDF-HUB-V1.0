@@ -1,63 +1,78 @@
-import type { MacroRecipe } from './types';
 import { executeMacroRecipe } from './executor';
-import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
-import { FileAdapter } from '@/adapters/file/FileAdapter';
+import type { MacroRecipe } from './types';
 
-export async function runMacroRecipeAcrossFiles(
-  recipe: MacroRecipe,
-  files: Array<{ name: string; bytes: Uint8Array }>,
-  options: {
-    saveOutputs: boolean;
-    suffix: string;
-  },
-) {
-  const results: Array<{
-    inputName: string;
-    outputName: string;
-    bytes: Uint8Array;
-    logs: string[];
-  }> = [];
-
-  for (const file of files) {
-    const pageCount = await PdfEditAdapter.countPages(file.bytes);
-    const run = await executeMacroRecipe(
-      {
-        workingBytes: file.bytes,
-        pageCount,
-        selectedPages: [],
-        currentPage: 1,
-        fileName: file.name,
-        donorFiles: {},
-        now: new Date(),
-      },
-      recipe,
-    );
-
-    const baseName = stripPdfExt(file.name);
-    const outputName = `${baseName}${options.suffix}.pdf`;
-
-    if (options.saveOutputs) {
-      await FileAdapter.savePdfBytes(run.workingBytes, outputName, null);
-      for (const output of run.extractedOutputs) {
-        await FileAdapter.savePdfBytes(
-          output.bytes,
-          `${baseName}-${output.name}`,
-          null,
-        );
-      }
-    }
-
-    results.push({
-      inputName: file.name,
-      outputName,
-      bytes: run.workingBytes,
-      logs: run.logs,
-    });
-  }
-
-  return results;
+export interface BatchRunOptions {
+  files: { name: string; bytes: Uint8Array }[];
+  recipe: MacroRecipe;
+  continueOnError: boolean;
+  donorFiles?: Record<string, Uint8Array>;
 }
 
-function stripPdfExt(name: string): string {
-  return name.toLowerCase().endsWith('.pdf') ? name.slice(0, -4) : name;
+export interface BatchRunResult {
+  successes: { fileName: string; bytes: Uint8Array; logs: string[] }[];
+  failures: { fileName: string; error: string }[];
+  metadata: {
+    recipeId: string;
+    startTime: Date;
+    endTime: Date;
+  };
+}
+
+export async function runMacroBatch(options: BatchRunOptions): Promise<BatchRunResult> {
+  const successes: BatchRunResult['successes'] = [];
+  const failures: BatchRunResult['failures'] = [];
+  const startTime = new Date();
+
+  for (const file of options.files) {
+    try {
+      // In batch context, assume pageCount needs to be calculated.
+      // But for now, just mock a fast pass or try to parse if needed.
+      // We'll rely on the executor's internal page resolution or basic adapter usage.
+
+      // Let's do a quick page count just for context.
+      const { PdfEditAdapter } = await import('@/adapters/pdf-edit/PdfEditAdapter');
+      const pageCount = await PdfEditAdapter.countPages(file.bytes);
+
+      const result = await executeMacroRecipe(
+        {
+          workingBytes: file.bytes,
+          pageCount,
+          selectedPages: [], // In batch mode, no selected pages
+          currentPage: 1,
+          fileName: file.name,
+          donorFiles: options.donorFiles ?? {},
+          now: new Date(),
+        },
+        options.recipe,
+      );
+
+      successes.push({
+        fileName: file.name,
+        bytes: result.workingBytes,
+        logs: result.logs,
+      });
+
+    } catch (err) {
+      failures.push({
+        fileName: file.name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+
+      if (!options.continueOnError) {
+        break; // Stop immediately
+      }
+    }
+  }
+
+  const endTime = new Date();
+
+  return {
+    successes,
+    failures,
+    metadata: {
+      recipeId: options.recipe.id,
+      startTime,
+      endTime,
+    },
+  };
 }

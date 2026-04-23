@@ -71,13 +71,19 @@ function resolveHeaderFooterTokens(
 
   if (values.enablePageNumberToken) {
     output = output.replaceAll('{page}', String(values.page));
+    output = output.replaceAll('{{page}}', String(values.page));
     output = output.replaceAll('{pages}', String(values.pages));
+    output = output.replaceAll('{{total_pages}}', String(values.pages));
+    output = output.replaceAll('{{pages}}', String(values.pages));
   }
   if (values.enableFileNameToken) {
     output = output.replaceAll('{file}', values.file);
+    output = output.replaceAll('{{file_name}}', values.file);
+    output = output.replaceAll('{{file}}', values.file);
   }
   if (values.enableDateToken) {
     output = output.replaceAll('{date}', values.date);
+    output = output.replaceAll('{{date}}', values.date);
   }
 
   // Also support generic $TOKEN syntax for new features
@@ -298,84 +304,135 @@ export class PdfEditAdapter {
 
   static async insertImage(
     baseBytes: Uint8Array,
-    imageBytes: Uint8Array,
-    pages: number[],
-    x: number,
-    y: number,
-    width: number,
-    height: number,
+    options: {
+      pages: number[];
+      imageBytes: Uint8Array;
+      mimeType: 'image/jpeg' | 'image/png';
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      scale?: number;
+    }
   ): Promise<Uint8Array> {
     const pdfDoc = await PDFDocument.load(baseBytes);
+    const image = options.mimeType === 'image/jpeg'
+      ? await pdfDoc.embedJpg(options.imageBytes)
+      : await pdfDoc.embedPng(options.imageBytes);
 
-    // Auto-detect format based on magic bytes (simplified)
-    const isPng = imageBytes[0] === 0x89 && imageBytes[1] === 0x50;
-    const image = isPng
-      ? await pdfDoc.embedPng(imageBytes)
-      : await pdfDoc.embedJpg(imageBytes);
+    let drawWidth = image.width;
+    let drawHeight = image.height;
 
-    for (const pageIndex of pages) {
-      if (pageIndex < 0 || pageIndex >= pdfDoc.getPageCount()) continue;
+    if (options.width && options.height) {
+      drawWidth = options.width;
+      drawHeight = options.height;
+    } else if (options.scale) {
+      drawWidth = image.width * options.scale;
+      drawHeight = image.height * options.scale;
+    }
+
+    for (const pageIndex of options.pages) {
       const page = pdfDoc.getPage(pageIndex);
       const pageHeight = page.getHeight();
 
-      // PDF coordinates are bottom-left origin, convert from top-left
+      // PDF-lib uses bottom-left origin. y is converted from top-left.
+      const drawY = pageHeight - options.y - drawHeight;
+
       page.drawImage(image, {
-        x,
-        y: pageHeight - y - height,
-        width,
-        height,
+        x: options.x,
+        y: drawY,
+        width: drawWidth,
+        height: drawHeight,
       });
     }
 
     return await pdfDoc.save();
   }
 
-  static async insertRichText(
+  static async injectRichText(
     baseBytes: Uint8Array,
-    pages: number[],
-    text: string,
-    x: number,
-    y: number,
-    fontSize: number,
-    color?: string,
-    fontFamily?: string, // Ignored for now, defaults to Helvetica
-    align?: 'left' | 'center' | 'right',
+    options: {
+      pages: number[];
+      text: string;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      fontSize: number;
+      color: string;
+      opacity: number;
+      fileName: string;
+      now: Date;
+      enablePageNumberToken: boolean;
+      enableFileNameToken: boolean;
+      enableDateToken: boolean;
+      textAlign: 'left' | 'center' | 'right' | 'justify';
+      // Future-proofing: font, weight, etc. can map to StandardFonts or custom
+    }
   ): Promise<Uint8Array> {
     const pdfDoc = await PDFDocument.load(baseBytes);
+    // Basic helvetica for now, could expand to bold/italic based on fontWeight/fontStyle
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const totalPages = pdfDoc.getPageCount();
 
-    for (const pageIndex of pages) {
-      if (pageIndex < 0 || pageIndex >= pdfDoc.getPageCount()) continue;
+    for (const pageIndex of options.pages) {
       const page = pdfDoc.getPage(pageIndex);
-      const pageHeight = page.getHeight();
-      const pageWidth = page.getWidth();
+      const width = page.getWidth();
+      const height = page.getHeight();
 
-      // Simple multiline support
-      const lines = text.split('\n');
+      const text = resolveHeaderFooterTokens(options.text, {
+        page: pageIndex + 1,
+        pages: totalPages,
+        file: options.fileName,
+        date: options.now.toLocaleDateString(),
+        enablePageNumberToken: options.enablePageNumberToken,
+        enableFileNameToken: options.enableFileNameToken,
+        enableDateToken: options.enableDateToken,
+      });
 
-      let currentY = pageHeight - y - fontSize; // Convert to bottom-left origin
+      const maxWidth = options.width ?? (width - options.x);
+
+      // Simple text wrapping simulation
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let currentLine = words[0];
+
+      for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const testLine = currentLine + ' ' + word;
+        const testWidth = font.widthOfTextAtSize(testLine, options.fontSize);
+        if (testWidth > maxWidth && i > 0) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      lines.push(currentLine);
+
+      // PDF-lib uses bottom-left origin.
+      let drawY = height - options.y - options.fontSize;
 
       for (const line of lines) {
-        let drawX = x;
-        if (align === 'center' || align === 'right') {
-          const textWidth = font.widthOfTextAtSize(line, fontSize);
-          if (align === 'center') {
-            // Assume x is the bounding box center or we just center on page if x=0
-            drawX = x === 0 ? (pageWidth - textWidth) / 2 : x - textWidth / 2;
-          } else if (align === 'right') {
-            drawX = x === 0 ? pageWidth - textWidth : x - textWidth;
-          }
+        const lineWidth = font.widthOfTextAtSize(line, options.fontSize);
+        let drawX = options.x;
+        if (options.textAlign === 'center') {
+          drawX = options.x + (maxWidth - lineWidth) / 2;
+        } else if (options.textAlign === 'right') {
+          drawX = options.x + maxWidth - lineWidth;
         }
 
         page.drawText(line, {
           x: drawX,
-          y: currentY,
+          y: drawY,
           font,
-          size: fontSize,
-          color: hexToRgb(color || '#000000'),
+          size: options.fontSize,
+          color: hexToRgb(options.color),
+          opacity: options.opacity,
+          maxWidth
         });
 
-        currentY -= (fontSize * 1.2); // Line height
+        drawY -= options.fontSize * 1.2; // roughly 1.2 line height
       }
     }
 
@@ -528,14 +585,28 @@ export class PdfEditAdapter {
         continue;
       }
 
-      if (annotation.type === 'shape') {
+      if (annotation.type === 'rectangle') {
         page.drawRectangle({
           x,
           y,
           width: annotation.rect.width,
           height: annotation.rect.height,
-          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
+          borderWidth: typeof annotation.data.strokeWidth === 'number' ? annotation.data.strokeWidth : (typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1),
           borderColor,
+          color: backgroundColor,
+        });
+        continue;
+      }
+
+      if (annotation.type === 'ellipse') {
+        page.drawEllipse({
+          x: x + annotation.rect.width / 2,
+          y: y + annotation.rect.height / 2,
+          xScale: annotation.rect.width / 2,
+          yScale: annotation.rect.height / 2,
+          borderWidth: typeof annotation.data.strokeWidth === 'number' ? annotation.data.strokeWidth : (typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1),
+          borderColor,
+          color: backgroundColor,
         });
         continue;
       }

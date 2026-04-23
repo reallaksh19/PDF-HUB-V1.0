@@ -67,9 +67,9 @@ export const ToolbarComment: React.FC = () => {
         </Button>
       </Tooltip>
 
-      <Tooltip content="Underline">
-        <Button variant={getToolVariant('underline')} size="icon" onClick={() => handleToolClick('underline')}>
-          <UnderlineIcon className="w-4 h-4" />
+      <Tooltip content="Rectangle">
+        <Button variant={getToolVariant('rectangle')} size="icon" onClick={() => handleToolClick('rectangle')}>
+          <Square className="w-4 h-4" />
         </Button>
       </Tooltip>
 
