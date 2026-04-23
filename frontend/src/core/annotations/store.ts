@@ -401,6 +401,40 @@ export const useAnnotationStore = create<AnnotationState & AnnotationActions>((s
       return snapshot(state, nextAnnotations);
     }),
 
+  bringToFront: () =>
+    set((state) => {
+      const selectedIds = new Set(state.selectedAnnotationIds.length > 0 ? state.selectedAnnotationIds : (state.activeAnnotationId ? [state.activeAnnotationId] : []));
+      if (selectedIds.size === 0) return state;
+
+      const currentMaxZ = Math.max(0, ...state.annotations.map(a => typeof a.data.zIndex === 'number' ? a.data.zIndex : 0));
+      const nextZ = currentMaxZ + 1;
+
+      const nextAnnotations = state.annotations.map((annotation) =>
+        selectedIds.has(annotation.id)
+          ? { ...annotation, data: { ...annotation.data, zIndex: nextZ }, updatedAt: Date.now() }
+          : annotation
+      );
+
+      return snapshot(state, nextAnnotations);
+    }),
+
+  sendToBack: () =>
+    set((state) => {
+      const selectedIds = new Set(state.selectedAnnotationIds.length > 0 ? state.selectedAnnotationIds : (state.activeAnnotationId ? [state.activeAnnotationId] : []));
+      if (selectedIds.size === 0) return state;
+
+      const currentMinZ = Math.min(0, ...state.annotations.map(a => typeof a.data.zIndex === 'number' ? a.data.zIndex : 0));
+      const nextZ = currentMinZ - 1;
+
+      const nextAnnotations = state.annotations.map((annotation) =>
+        selectedIds.has(annotation.id)
+          ? { ...annotation, data: { ...annotation.data, zIndex: nextZ }, updatedAt: Date.now() }
+          : annotation
+      );
+
+      return snapshot(state, nextAnnotations);
+    }),
+
   distributeSelection: (mode) =>
     set((state) => {
       if (state.selectedAnnotationIds.length < 3) return state;
