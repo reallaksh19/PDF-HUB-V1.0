@@ -19,6 +19,22 @@ type HeaderFooterOptions = {
   enableDateToken: boolean;
 };
 
+type DrawTextOptions = {
+  pages: number[];
+  text: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  color: string;
+  opacity: number;
+  align: 'left' | 'center' | 'right';
+  fileName: string;
+  now: Date;
+  enablePageNumberToken: boolean;
+  enableFileNameToken: boolean;
+  enableDateToken: boolean;
+};
+
 function normalizePageIndices(pageIndices: number[]): number[] {
   return Array.from(new Set(pageIndices)).sort((a, b) => a - b);
 }
@@ -313,6 +329,85 @@ export class PdfEditAdapter {
       page.drawText(text, {
         x,
         y,
+        font,
+        size: options.fontSize,
+        color: hexToRgb(options.color),
+        opacity: options.opacity,
+      });
+    }
+
+    return await pdfDoc.save();
+  }
+
+  static async insertImage(
+    baseBytes: Uint8Array,
+    imageBytes: Uint8Array,
+    options: {
+      pages: number[];
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+
+    // Naively attempt to embed as PNG or JPG based on magic bytes/error fallback
+    let image;
+    try {
+      image = await pdfDoc.embedPng(imageBytes);
+    } catch {
+      image = await pdfDoc.embedJpg(imageBytes);
+    }
+
+    for (const pageIndex of options.pages) {
+      const page = pdfDoc.getPage(pageIndex);
+      // coordinate system: y is from bottom
+      const y = page.getHeight() - options.y - options.height;
+      page.drawImage(image, {
+        x: options.x,
+        y: y,
+        width: options.width,
+        height: options.height,
+      });
+    }
+
+    return await pdfDoc.save();
+  }
+
+  static async drawTextOnPages(
+    baseBytes: Uint8Array,
+    options: DrawTextOptions,
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const totalPages = pdfDoc.getPageCount();
+
+    for (const pageIndex of options.pages) {
+      const page = pdfDoc.getPage(pageIndex);
+      const width = page.getWidth();
+
+      const text = resolveHeaderFooterTokens(options.text, {
+        page: pageIndex + 1,
+        pages: totalPages,
+        file: options.fileName,
+        date: options.now.toLocaleDateString(),
+        enablePageNumberToken: options.enablePageNumberToken,
+        enableFileNameToken: options.enableFileNameToken,
+        enableDateToken: options.enableDateToken,
+      });
+
+      const textWidth = font.widthOfTextAtSize(text, options.fontSize);
+      const x =
+        options.align === 'left'
+          ? options.x
+          : options.align === 'center'
+          ? (width - textWidth) / 2
+          : width - options.x - textWidth;
+
+      page.drawText(text, {
+        x,
+        y: options.y,
         font,
         size: options.fontSize,
         color: hexToRgb(options.color),

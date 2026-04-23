@@ -54,6 +54,38 @@ export type MacroStep =
       pageNumberToken?: boolean;
       fileNameToken?: boolean;
       dateToken?: boolean;
+    }
+  | {
+      op: 'draw_text_on_pages';
+      selector: PageSelector;
+      text: string;
+      x: number;
+      y: number;
+      fontSize: number;
+      color?: string;
+      opacity?: number;
+      align?: 'left' | 'center' | 'right';
+      pageNumberToken?: boolean;
+      fileNameToken?: boolean;
+      dateToken?: boolean;
+    }
+  | {
+      op: 'insert_image';
+      donorFileId: string;
+      selector: PageSelector;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }
+  | {
+      op: 'inject_rich_text';
+      html: string;
+      selector: PageSelector;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
     };
 
 export interface MacroRecipe {
@@ -84,4 +116,5 @@ export interface MacroRunResult {
   selectedPages: number[];
   logs: string[];
   extractedOutputs: MacroOutputFile[];
+  outputs?: MacroOutputFile[];
 }

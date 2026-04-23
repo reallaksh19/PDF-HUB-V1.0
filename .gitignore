@@ -16,3 +16,12 @@ backend/tests/__pycache__/
 **/.DS_Store
 **/*.pyc
 *.pyc
+
+# Ignored from the user zip extraction
+pdf hub/
+pdf hub.zip
+pdf hub l1.zip
+backend (2).zip
+PATCH BUNDLE2.txt
+patchbundle.txt
+doccraft_ui_mockup.html
