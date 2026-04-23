@@ -379,37 +379,6 @@ export async function executeMacroRecipe(
         break;
       }
 
-      case 'draw_text_on_pages': {
-        const pages = resolvePageSelector(step.selector, pageCount, {
-          currentPage: ctx.currentPage,
-          selectedPages,
-        });
-
-        if (pages.length === 0) {
-          logs.push('Skipped draw_text_on_pages: no pages selected');
-          break;
-        }
-
-        workingBytes = await PdfEditAdapter.drawTextOnPages(workingBytes, {
-          pages: pages.map((p) => p - 1),
-          text: step.text,
-          x: step.x,
-          y: step.y,
-          fontSize: step.fontSize,
-          color: step.color ?? '#111827',
-          opacity: step.opacity ?? 0.95,
-          align: step.align ?? 'left',
-          fileName: ctx.fileName,
-          now: ctx.now,
-          enablePageNumberToken: step.pageNumberToken ?? true,
-          enableFileNameToken: step.fileNameToken ?? false,
-          enableDateToken: step.dateToken ?? false,
-        });
-
-        logs.push(`Drew text on pages: ${pages.join(', ')}`);
-        break;
-      }
-
       default:
         assertNever(step);
     }
@@ -423,7 +392,6 @@ export async function executeMacroRecipe(
     selectedPages,
     logs,
     extractedOutputs,
-    outputs: extractedOutputs,
   };
 }
 

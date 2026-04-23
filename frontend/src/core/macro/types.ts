@@ -106,5 +106,4 @@ export interface MacroRunResult {
   selectedPages: number[];
   logs: string[];
   extractedOutputs: MacroOutputFile[];
-  outputs?: MacroOutputFile[];
 }

@@ -10,11 +10,9 @@ const ANNOTATION_TYPES: AnnotationType[] = [
   'textbox',
   'highlight',
   'underline',
-  'strikeout',
   'shape',
   'freehand',
   'stamp',
-  'sticky-note',
   'comment',
   'line',
   'arrow',
@@ -30,8 +28,6 @@ export const InspectorPanel: React.FC = () => {
     updateAnnotation,
     updateManyAnnotations,
     deleteSelection,
-    setReviewStatusForSelection,
-    toggleLockSelection,
   } = useAnnotationStore();
 
   const [previousWidth, setPreviousWidth] = useState(18);
@@ -134,8 +130,6 @@ export const InspectorPanel: React.FC = () => {
             annotation={activeAnnotation}
             updateAnnotation={updateAnnotation}
             deleteSelection={deleteSelection}
-            setReviewStatusForSelection={setReviewStatusForSelection}
-            toggleLockSelection={toggleLockSelection}
           />
         )}
 
@@ -159,15 +153,7 @@ const PropertiesTab: React.FC<{
   annotation: PdfAnnotation;
   updateAnnotation: (id: string, data: Partial<PdfAnnotation>) => void;
   deleteSelection: () => void;
-  setReviewStatusForSelection: (status: 'open' | 'resolved' | 'rejected') => void;
-  toggleLockSelection: () => void;
-}> = ({
-  annotation,
-  updateAnnotation,
-  deleteSelection,
-  setReviewStatusForSelection,
-  toggleLockSelection,
-}) => {
+}> = ({ annotation, updateAnnotation, deleteSelection }) => {
   const updateRect = (key: 'x' | 'y' | 'width' | 'height', value: string) => {
     const next = Number(value);
     if (Number.isNaN(next)) {
@@ -221,32 +207,6 @@ const PropertiesTab: React.FC<{
         }}
       />
 
-      <LabeledSelect
-        label="Review Status"
-        value={
-          typeof annotation.data.reviewStatus === 'string'
-            ? annotation.data.reviewStatus
-            : 'open'
-        }
-        onChange={(value) =>
-          setReviewStatusForSelection(value as 'open' | 'resolved' | 'rejected')
-        }
-        options={[
-          { label: 'open', value: 'open' },
-          { label: 'resolved', value: 'resolved' },
-          { label: 'rejected', value: 'rejected' },
-        ]}
-      />
-
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={annotation.data.locked === true}
-          onChange={() => toggleLockSelection()}
-        />
-        Locked
-      </label>
-
       {isTextLike(annotation.type) && (
         <LabeledTextarea
           label="Text"
@@ -284,41 +244,62 @@ const StyleTab: React.FC<{
     );
   };
 
+  const isLineOrShape = annotation.type === 'shape' || annotation.type === 'line' || annotation.type === 'arrow';
+  const isHighlightOrStrike = annotation.type === 'highlight' || annotation.type === 'strikeout' || annotation.type === 'underline';
+
   return (
     <div className="p-4 space-y-4">
       <SectionTitle title="Appearance" />
 
       <TwoColumnRow>
-        <LabeledColorInput
-          label="Background"
-          value={readColor(annotation.data.backgroundColor, '#ffffff')}
-          onChange={(value) => applyToSelection({ backgroundColor: value })}
-        />
-        <LabeledColorInput
-          label="Border"
-          value={readColor(annotation.data.borderColor, '#60a5fa')}
-          onChange={(value) => applyToSelection({ borderColor: value })}
-        />
+        {!isLineOrShape && annotation.type !== 'underline' && annotation.type !== 'strikeout' && (
+          <LabeledColorInput
+            label="Background"
+            value={readColor(annotation.data.backgroundColor, '#ffffff')}
+            onChange={(value) => applyToSelection({ backgroundColor: value })}
+          />
+        )}
+        {annotation.type !== 'highlight' && (
+          <LabeledColorInput
+            label={annotation.type === 'underline' || annotation.type === 'strikeout' ? "Color" : "Border"}
+            value={readColor(annotation.data.borderColor, '#60a5fa')}
+            onChange={(value) => applyToSelection({ borderColor: value })}
+          />
+        )}
       </TwoColumnRow>
 
       <TwoColumnRow>
-        <LabeledColorInput
-          label="Text"
-          value={readColor(annotation.data.textColor, '#0f172a')}
-          onChange={(value) => applyToSelection({ textColor: value })}
-        />
-        <LabeledNumberInput
-          label="Border Width"
-          value={typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1}
-          onChange={(value) => {
-            const next = Number(value);
-            if (Number.isNaN(next)) {
-              return;
-            }
-            applyToSelection({ borderWidth: next });
-          }}
-        />
+        {isTextLike(annotation.type) && (
+          <LabeledColorInput
+            label="Text"
+            value={readColor(annotation.data.textColor, '#0f172a')}
+            onChange={(value) => applyToSelection({ textColor: value })}
+          />
+        )}
+        {!isHighlightOrStrike && (
+          <LabeledNumberInput
+            label="Border Width"
+            value={typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : (isLineOrShape ? 2 : 1)}
+            onChange={(value) => {
+              const next = Number(value);
+              if (Number.isNaN(next)) return;
+              applyToSelection({ borderWidth: next });
+            }}
+          />
+        )}
       </TwoColumnRow>
+
+      {isLineOrShape && (
+        <LabeledSelect
+          label="Border Style"
+          value={typeof annotation.data.borderStyle === 'string' ? annotation.data.borderStyle : 'solid'}
+          onChange={(value) => applyToSelection({ borderStyle: value })}
+          options={[
+            { label: 'Solid', value: 'solid' },
+            { label: 'Dashed', value: 'dashed' },
+          ]}
+        />
+      )}
 
       {isTextLike(annotation.type) && (
         <>
@@ -392,13 +373,7 @@ const MetadataTab: React.FC<{ annotation: PdfAnnotation }> = ({ annotation }) =>
 );
 
 function isTextLike(type: AnnotationType): boolean {
-  return (
-    type === 'textbox' ||
-    type === 'comment' ||
-    type === 'stamp' ||
-    type === 'callout' ||
-    type === 'sticky-note'
-  );
+  return type === 'textbox' || type === 'comment' || type === 'stamp' || type === 'callout';
 }
 
 const SectionTitle: React.FC<{ title: string }> = ({ title }) => (

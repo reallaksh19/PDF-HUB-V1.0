@@ -9,15 +9,12 @@ import {
   FilePlus2,
   Trash2,
   Split,
-  Files,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 import { useSessionStore } from '@/core/session/store';
-import { BUILTIN_MACROS } from '@/core/macro/builtins';
-import { runMacroRecipeAcrossFiles } from '@/core/macro/batchRunner';
 
 export const ToolbarOrganize: React.FC = () => {
   const {
@@ -170,55 +167,6 @@ export const ToolbarOrganize: React.FC = () => {
     await applyNewBytes(next, viewState.currentPage);
   };
 
-  const handleBatchRun = async () => {
-    const files = await FileAdapter.pickPdfFiles(true);
-    if (!files.length) {
-      return;
-    }
-
-    const selected = (
-      window.prompt(
-        'Batch recipe: pageNumbers | footer | header | batchText',
-        'pageNumbers',
-      ) || 'pageNumbers'
-    )
-      .trim()
-      .toLowerCase();
-
-    let recipe = BUILTIN_MACROS.add_page_numbers_footer;
-    if (selected === 'footer') {
-      recipe = BUILTIN_MACROS.add_file_date_footer_selected;
-    }
-    if (selected === 'header') {
-      recipe = BUILTIN_MACROS.add_filename_header_selected;
-    }
-    if (selected === 'batchtext') {
-      const text = window.prompt('Batch text', 'REVIEW COPY') ?? 'REVIEW COPY';
-      recipe = {
-        ...BUILTIN_MACROS.batch_text_selected,
-        steps: [
-          {
-            op: 'draw_text_on_pages',
-            selector: { mode: 'all' },
-            text,
-            x: 36,
-            y: 36,
-            fontSize: 16,
-            color: '#b91c1c',
-            opacity: 0.9,
-            align: 'left',
-          },
-        ],
-      };
-    }
-
-    await runMacroRecipeAcrossFiles(
-      recipe,
-      files.map((file) => ({ name: file.name, bytes: file.bytes })),
-      { saveOutputs: true, suffix: '-processed' },
-    );
-  };
-
   return (
     <div className="flex items-center space-x-1">
       <Tooltip content="Merge PDFs">
@@ -278,12 +226,6 @@ export const ToolbarOrganize: React.FC = () => {
       <Tooltip content="Split selected pages into a new PDF and remove them here">
         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleSplitOut} disabled={!workingBytes}>
           <Split className="w-4 h-4" />
-        </Button>
-      </Tooltip>
-
-      <Tooltip content="Run one macro recipe on several files">
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleBatchRun}>
-          <Files className="w-4 h-4" />
         </Button>
       </Tooltip>
     </div>

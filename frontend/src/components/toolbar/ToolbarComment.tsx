@@ -1,9 +1,7 @@
-import React from 'react';
+﻿import React from 'react';
 import {
   Type,
   Highlighter,
-  Underline as UnderlineIcon,
-  Strikethrough,
   Square,
   Stamp,
   MessageSquare,
@@ -35,14 +33,14 @@ export const ToolbarComment: React.FC = () => {
     alignSelection,
     distributeSelection,
     deleteSelection,
-    toggleLockSelection,
-    setReviewStatusForSelection,
   } = useAnnotationStore();
 
   const { viewState } = useSessionStore();
   const hasSelection = selectedAnnotationIds.length > 0;
 
-  const handleToolClick = (tool: Exclude<ActiveTool, 'select' | 'hand'>) => {
+  const handleToolClick = (
+    tool: Exclude<ActiveTool, 'select' | 'hand'>,
+  ) => {
     setActiveTool(activeTool === tool ? 'select' : tool);
   };
 
@@ -50,11 +48,7 @@ export const ToolbarComment: React.FC = () => {
     activeTool === tool ? 'secondary' : 'ghost';
 
   return (
-    <div
-      className="flex items-center space-x-1 shrink-0"
-      role="toolbar"
-      aria-label="Annotation tools"
-    >
+    <div className="flex items-center space-x-1 shrink-0" role="toolbar" aria-label="Annotation tools">
       <Tooltip content="Text Box">
         <Button variant={getToolVariant('textbox')} size="icon" onClick={() => handleToolClick('textbox')}>
           <Type className="w-4 h-4" />
@@ -67,33 +61,15 @@ export const ToolbarComment: React.FC = () => {
         </Button>
       </Tooltip>
 
-      <Tooltip content="Underline">
-        <Button variant={getToolVariant('underline')} size="icon" onClick={() => handleToolClick('underline')}>
-          <UnderlineIcon className="w-4 h-4" />
-        </Button>
-      </Tooltip>
-
-      <Tooltip content="Strikeout">
-        <Button variant={getToolVariant('strikeout')} size="icon" onClick={() => handleToolClick('strikeout')}>
-          <Strikethrough className="w-4 h-4" />
-        </Button>
-      </Tooltip>
-
-      <Tooltip content="Sticky Note">
-        <Button variant={getToolVariant('sticky-note')} size="icon" onClick={() => handleToolClick('sticky-note')}>
-          <MessageSquare className="w-4 h-4" />
-        </Button>
-      </Tooltip>
-
-      <Tooltip content="Comment Box">
-        <Button variant={getToolVariant('comment')} size="icon" onClick={() => handleToolClick('comment')}>
-          <MessageCircle className="w-4 h-4" />
-        </Button>
-      </Tooltip>
-
       <Tooltip content="Shape">
         <Button variant={getToolVariant('shape')} size="icon" onClick={() => handleToolClick('shape')}>
           <Square className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Note">
+        <Button variant={getToolVariant('comment')} size="icon" onClick={() => handleToolClick('comment')}>
+          <MessageSquare className="w-4 h-4" />
         </Button>
       </Tooltip>
 
@@ -115,6 +91,12 @@ export const ToolbarComment: React.FC = () => {
         </Button>
       </Tooltip>
 
+      <Tooltip content="Callout">
+        <Button variant={getToolVariant('callout')} size="icon" onClick={() => handleToolClick('callout')}>
+          <MessageCircle className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
       <Separator orientation="vertical" className="h-6" />
 
       <Button variant="ghost" size="sm" onClick={copySelection} disabled={!hasSelection}>
@@ -125,9 +107,6 @@ export const ToolbarComment: React.FC = () => {
       </Button>
       <Button variant="ghost" size="sm" onClick={duplicateSelection} disabled={!hasSelection}>
         Duplicate
-      </Button>
-      <Button variant="ghost" size="sm" onClick={deleteSelection} disabled={!hasSelection}>
-        Delete
       </Button>
 
       <Separator orientation="vertical" className="h-6" />
@@ -144,20 +123,8 @@ export const ToolbarComment: React.FC = () => {
       <Button variant="ghost" size="sm" onClick={() => distributeSelection('vertical')} disabled={selectedAnnotationIds.length < 3}>
         Dist V
       </Button>
-
-      <Separator orientation="vertical" className="h-6" />
-
-      <Button variant="ghost" size="sm" onClick={toggleLockSelection} disabled={!hasSelection}>
-        Lock
-      </Button>
-      <Button variant="ghost" size="sm" onClick={() => setReviewStatusForSelection('open')} disabled={!hasSelection}>
-        Open
-      </Button>
-      <Button variant="ghost" size="sm" onClick={() => setReviewStatusForSelection('resolved')} disabled={!hasSelection}>
-        Resolve
-      </Button>
-      <Button variant="ghost" size="sm" onClick={() => setReviewStatusForSelection('rejected')} disabled={!hasSelection}>
-        Reject
+      <Button variant="ghost" size="sm" onClick={deleteSelection} disabled={!hasSelection}>
+        Delete
       </Button>
 
       <Separator orientation="vertical" className="h-6" />
