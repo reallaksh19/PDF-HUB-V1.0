@@ -2,6 +2,7 @@ import React from 'react';
 import { UploadCloud, Lock } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { VList } from 'virtua';
 
 import { PdfRendererAdapter, type TextLayerItem } from '@/adapters/pdf-renderer/PdfRendererAdapter';
 import { loadAnnotations, saveAnnotations } from '@/core/annotations/persistence';
@@ -67,10 +68,15 @@ export const DocumentWorkspace: React.FC = () => {
   } = useSessionStore();
 
   const { activeTool } = useEditorStore();
+  const { setZoom } = useSessionStore();
 
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  const [isPanning, setIsPanning] = React.useState(false);
+  const lastPanPos = React.useRef<{ x: number; y: number } | null>(null);
 
   const handleBrowse = async () => {
     try {
@@ -165,6 +171,47 @@ export const DocumentWorkspace: React.FC = () => {
     };
   }, [annotations, documentKey]);
 
+  React.useLayoutEffect(() => {
+    if (!pdfDoc || !containerRef.current || viewState.fitMode === 'manual') return;
+
+    let resizeTimer: number;
+
+    const handleResize = async () => {
+      if (!pdfDoc || !containerRef.current) return;
+      try {
+        const page = await pdfDoc.getPage(viewState.currentPage);
+        const viewport = page.getViewport({ scale: 1 });
+        const containerWidth = containerRef.current.clientWidth - 32; // some padding
+        const containerHeight = containerRef.current.clientHeight - 32;
+
+        if (viewState.fitMode === 'width') {
+          const newZoom = (containerWidth / viewport.width) * 100;
+          setZoom(Math.floor(newZoom));
+        } else if (viewState.fitMode === 'page') {
+          const scaleWidth = containerWidth / viewport.width;
+          const scaleHeight = containerHeight / viewport.height;
+          const newZoom = Math.min(scaleWidth, scaleHeight) * 100;
+          setZoom(Math.floor(newZoom));
+        }
+      } catch {
+        // Ignored or logged via external logger in production
+      }
+    };
+
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => void handleResize(), 100);
+    });
+
+    observer.observe(containerRef.current);
+    void handleResize(); // initial calculation
+
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(resizeTimer);
+    };
+  }, [pdfDoc, viewState.fitMode, viewState.currentPage, setZoom]);
+
   if (!workingBytes) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-slate-100 dark:bg-slate-950/50">
@@ -199,59 +246,155 @@ export const DocumentWorkspace: React.FC = () => {
 
   if (!pdfDoc) return null;
 
+  const renderPage = (index: number) => {
+    const pageNumber = index + 1;
+    return (
+      <div key={pageNumber} className="flex justify-center mb-8">
+        <PageSurface
+          doc={pdfDoc}
+          pageNumber={pageNumber}
+          scale={viewState.zoom / 100}
+          activeTool={activeTool}
+          pageAnnotations={annotations
+            .filter((annotation) => annotation.pageNumber === pageNumber)
+            .slice()
+            .sort((a, b) => readZIndex(a) - readZIndex(b))}
+          selectedAnnotationIds={selectedAnnotationIds}
+          onActivate={() => setPage(pageNumber)}
+          onCreateAnnotation={(annotation) => {
+            addAnnotation(annotation);
+            setSelection([annotation.id]);
+            setActiveAnnotationId(annotation.id);
+          }}
+          onCreateManyAnnotations={(items) => {
+            items.forEach((item) => addAnnotation(item));
+            if (items.length > 0) {
+              const ids = items.map((item) => item.id);
+              setSelection(ids);
+              setActiveAnnotationId(ids[0] ?? null);
+            }
+          }}
+          onSetSingleSelection={(id) => {
+            setSelection([id]);
+            setActiveAnnotationId(id);
+          }}
+          onToggleSelection={(id) => {
+            toggleSelection(id);
+            setActiveAnnotationId(id);
+          }}
+          onSetSelection={(ids) => {
+            setSelection(ids);
+            setActiveAnnotationId(ids[0] ?? null);
+          }}
+          onClearSelection={clearSelection}
+          onCommitAnnotation={(id, patch) => {
+            updateAnnotation(id, patch);
+          }}
+          onCommitManyAnnotations={(updates) => {
+            updateManyAnnotations(updates);
+          }}
+        />
+      </div>
+    );
+  };
+
+  const renderSingle = () => {
+    return (
+      <div className="flex flex-col items-center">
+        {renderPage(viewState.currentPage - 1)}
+      </div>
+    );
+  };
+
+  const renderTwoPage = () => {
+    const pages = [];
+    let i = 0;
+    while (i < pdfDoc.numPages) {
+      if (i === 0) {
+        // First page isolated
+        pages.push(
+          <div key={`spread-${i}`} className="flex justify-center gap-8 mb-8 w-full">
+            <div className="flex-1 flex justify-end" />
+            <div className="flex-1 flex justify-start">{renderPage(i)}</div>
+          </div>
+        );
+        i++;
+      } else {
+        // Pairs
+        const leftIndex = i;
+        const rightIndex = i + 1 < pdfDoc.numPages ? i + 1 : null;
+        pages.push(
+          <div key={`spread-${i}`} className="flex justify-center gap-8 mb-8 w-full max-w-[2000px]">
+            <div className="flex-1 flex justify-end">{renderPage(leftIndex)}</div>
+            <div className="flex-1 flex justify-start">{rightIndex !== null ? renderPage(rightIndex) : null}</div>
+          </div>
+        );
+        i += 2;
+      }
+    }
+
+    // Only show current spread based on currentPage
+    const currentSpreadIndex = viewState.currentPage === 1 ? 0 : Math.floor((viewState.currentPage) / 2);
+
+    return (
+      <div className="flex flex-col items-center w-full">
+        {pages[currentSpreadIndex]}
+      </div>
+    );
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activeTool !== 'hand') return;
+    setIsPanning(true);
+    lastPanPos.current = { x: e.clientX, y: e.clientY };
+    if (containerRef.current) {
+      containerRef.current.setPointerCapture(e.pointerId);
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isPanning || activeTool !== 'hand' || !lastPanPos.current || !containerRef.current) return;
+
+    const dx = e.clientX - lastPanPos.current.x;
+    const dy = e.clientY - lastPanPos.current.y;
+
+    containerRef.current.scrollBy(-dx, -dy);
+    lastPanPos.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activeTool !== 'hand') return;
+    setIsPanning(false);
+    lastPanPos.current = null;
+    if (containerRef.current && containerRef.current.hasPointerCapture(e.pointerId)) {
+      containerRef.current.releasePointerCapture(e.pointerId);
+    }
+  };
+
   return (
-    <div className="flex flex-col h-full bg-slate-200 dark:bg-slate-950 overflow-auto">
+    <div
+      ref={containerRef}
+      className={`flex flex-col h-full bg-slate-200 dark:bg-slate-950 overflow-auto ${
+        activeTool === 'hand' ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''
+      }`}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+    >
       <div className="min-h-full flex flex-col items-center py-8">
-        {Array.from({ length: pdfDoc.numPages }, (_, index) => {
-          const pageNumber = index + 1;
-          return (
-            <PageSurface
-              key={pageNumber}
-              doc={pdfDoc}
-              pageNumber={pageNumber}
-              scale={viewState.zoom / 100}
-              activeTool={activeTool}
-              pageAnnotations={annotations
-                .filter((annotation) => annotation.pageNumber === pageNumber)
-                .slice()
-                .sort((a, b) => readZIndex(a) - readZIndex(b))}
-              selectedAnnotationIds={selectedAnnotationIds}
-              onActivate={() => setPage(pageNumber)}
-              onCreateAnnotation={(annotation) => {
-                addAnnotation(annotation);
-                setSelection([annotation.id]);
-                setActiveAnnotationId(annotation.id);
-              }}
-              onCreateManyAnnotations={(items) => {
-                items.forEach((item) => addAnnotation(item));
-                if (items.length > 0) {
-                  const ids = items.map((item) => item.id);
-                  setSelection(ids);
-                  setActiveAnnotationId(ids[0] ?? null);
-                }
-              }}
-              onSetSingleSelection={(id) => {
-                setSelection([id]);
-                setActiveAnnotationId(id);
-              }}
-              onToggleSelection={(id) => {
-                toggleSelection(id);
-                setActiveAnnotationId(id);
-              }}
-              onSetSelection={(ids) => {
-                setSelection(ids);
-                setActiveAnnotationId(ids[0] ?? null);
-              }}
-              onClearSelection={clearSelection}
-              onCommitAnnotation={(id, patch) => {
-                updateAnnotation(id, patch);
-              }}
-              onCommitManyAnnotations={(updates) => {
-                updateManyAnnotations(updates);
-              }}
-            />
-          );
-        })}
+        {viewState.viewMode === 'continuous' ? (
+          <VList
+            style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
+            overscan={3}
+          >
+            {Array.from({ length: pdfDoc.numPages }, (_, i) => renderPage(i))}
+          </VList>
+        ) : viewState.viewMode === 'single' ? (
+          renderSingle()
+        ) : (
+          renderTwoPage()
+        )}
       </div>
     </div>
   );
