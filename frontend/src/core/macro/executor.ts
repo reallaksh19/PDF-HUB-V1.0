@@ -15,6 +15,7 @@ export async function executeMacroRecipe(
   let pageCount = ctx.pageCount;
   let selectedPages = [...ctx.selectedPages];
   const logs: string[] = [];
+  const errors: string[] = [];
   const extractedOutputs: Array<{ name: string; bytes: Uint8Array }> = [];
 
   for (const step of recipe.steps) {
@@ -33,13 +34,19 @@ export async function executeMacroRecipe(
           .map((id) => ctx.donorFiles[id])
           .filter((value): value is Uint8Array => value instanceof Uint8Array);
 
+        if (donors.length !== step.donorFileIds.length) {
+          errors.push('One or more donor files for merge_files were not found in context.');
+        }
+
         if (donors.length === 0) {
           logs.push('Skipped merge_files: no donor files found');
           break;
         }
 
-        workingBytes = await PdfEditAdapter.merge(workingBytes, donors);
-        pageCount = await PdfEditAdapter.countPages(workingBytes);
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.merge(workingBytes, donors);
+          pageCount = await PdfEditAdapter.countPages(workingBytes);
+        }
         logs.push(`Merged ${donors.length} donor file(s)`);
         break;
       }
@@ -47,17 +54,20 @@ export async function executeMacroRecipe(
       case 'insert_pdf': {
         const donor = ctx.donorFiles[step.donorFileId];
         if (!donor) {
-          logs.push(`Skipped insert_pdf: missing donor file ${step.donorFileId}`);
+          errors.push(`Skipped insert_pdf: missing donor file ${step.donorFileId}`);
           break;
         }
 
-        workingBytes = await PdfEditAdapter.insertAt(
-          workingBytes,
-          donor,
-          clamp(step.atIndex, 0, pageCount),
-        );
-        pageCount = await PdfEditAdapter.countPages(workingBytes);
-        logs.push(`Inserted donor PDF at index ${step.atIndex}`);
+        const insertIndex = clamp(step.atIndex, 0, pageCount);
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.insertAt(
+            workingBytes,
+            donor,
+            insertIndex,
+          );
+          pageCount = await PdfEditAdapter.countPages(workingBytes);
+        }
+        logs.push(`Inserted donor PDF at index ${insertIndex}`);
         break;
       }
 
@@ -71,14 +81,16 @@ export async function executeMacroRecipe(
           break;
         }
 
-        const bytes = await PdfEditAdapter.extractPages(
-          workingBytes,
-          pages.map((p) => p - 1),
-        );
-        extractedOutputs.push({
-          name: step.outputName ?? `extract-${pages.join('-')}.pdf`,
-          bytes,
-        });
+        if (!recipe.dryRun) {
+          const bytes = await PdfEditAdapter.extractPages(
+            workingBytes,
+            pages.map((p) => p - 1),
+          );
+          extractedOutputs.push({
+            name: step.outputName ?? `extract-${pages.join('-')}.pdf`,
+            bytes,
+          });
+        }
         logs.push(`Extracted pages: ${pages.join(', ')}`);
         break;
       }
@@ -93,23 +105,25 @@ export async function executeMacroRecipe(
           break;
         }
 
-        const extracted = await PdfEditAdapter.extractPages(
-          workingBytes,
-          pages.map((p) => p - 1),
-        );
+        if (!recipe.dryRun) {
+          const extracted = await PdfEditAdapter.extractPages(
+            workingBytes,
+            pages.map((p) => p - 1),
+          );
 
-        workingBytes = await PdfEditAdapter.removePages(
-          workingBytes,
-          pages.map((p) => p - 1),
-        );
-        pageCount = await PdfEditAdapter.countPages(workingBytes);
+          workingBytes = await PdfEditAdapter.removePages(
+            workingBytes,
+            pages.map((p) => p - 1),
+          );
+          pageCount = await PdfEditAdapter.countPages(workingBytes);
 
-        extractedOutputs.push({
-          name: step.outputName ?? `split-${pages.join('-')}.pdf`,
-          bytes: extracted,
-        });
+          extractedOutputs.push({
+            name: step.outputName ?? `split-${pages.join('-')}.pdf`,
+            bytes: extracted,
+          });
 
-        selectedPages = [];
+          selectedPages = [];
+        }
         logs.push(`Split out pages: ${pages.join(', ')}`);
         break;
       }
@@ -124,11 +138,13 @@ export async function executeMacroRecipe(
           break;
         }
 
-        workingBytes = await PdfEditAdapter.duplicatePages(
-          workingBytes,
-          pages.map((p) => p - 1),
-        );
-        pageCount = await PdfEditAdapter.countPages(workingBytes);
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.duplicatePages(
+            workingBytes,
+            pages.map((p) => p - 1),
+          );
+          pageCount = await PdfEditAdapter.countPages(workingBytes);
+        }
         logs.push(`Duplicated pages: ${pages.join(', ')}`);
         break;
       }
@@ -143,11 +159,13 @@ export async function executeMacroRecipe(
           break;
         }
 
-        workingBytes = await PdfEditAdapter.rotatePages(
-          workingBytes,
-          pages.map((p) => p - 1),
-          step.degrees,
-        );
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.rotatePages(
+            workingBytes,
+            pages.map((p) => p - 1),
+            step.degrees,
+          );
+        }
         logs.push(`Rotated pages ${pages.join(', ')} by ${step.degrees}°`);
         break;
       }
@@ -162,13 +180,102 @@ export async function executeMacroRecipe(
           break;
         }
 
-        workingBytes = await PdfEditAdapter.removePages(
-          workingBytes,
-          pages.map((p) => p - 1),
-        );
-        pageCount = await PdfEditAdapter.countPages(workingBytes);
-        selectedPages = [];
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.removePages(
+            workingBytes,
+            pages.map((p) => p - 1),
+          );
+          pageCount = await PdfEditAdapter.countPages(workingBytes);
+          selectedPages = [];
+        }
         logs.push(`Removed pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'insert_image': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped insert_image: no pages selected');
+          break;
+        }
+
+        const imageBytes = ctx.donorFiles[step.donorFileId];
+        if (!imageBytes) {
+          errors.push(`Failed insert_image: donor file ${step.donorFileId} not found`);
+          break;
+        }
+
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.insertImage(
+            workingBytes,
+            imageBytes,
+            pages.map((p) => p - 1),
+            step.x,
+            step.y,
+            step.width,
+            step.height
+          );
+        }
+        logs.push(`Inserted image onto pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'insert_rich_text': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped insert_rich_text: no pages selected');
+          break;
+        }
+
+        // Replace context variables in the text
+        let text = step.text;
+        text = text.replaceAll('$DATE', ctx.now.toLocaleDateString());
+
+        // Process per-page if needed for $PAGE_NUMBER and $TOTAL_PAGES
+        // Since PdfEditAdapter.insertRichText handles bulk pages but not per-page dynamic text natively,
+        // we might just iterate here and call it for each page if it contains page-specific tokens.
+        if (!recipe.dryRun) {
+          if (text.includes('$PAGE_NUMBER') || text.includes('$TOTAL_PAGES')) {
+            for (const pageNum of pages) {
+              let pageText = text;
+              pageText = pageText.replaceAll('$PAGE_NUMBER', String(pageNum));
+              pageText = pageText.replaceAll('$TOTAL_PAGES', String(pageCount));
+              workingBytes = await PdfEditAdapter.insertRichText(
+                workingBytes,
+                [pageNum - 1],
+                pageText,
+                step.x,
+                step.y,
+                step.fontSize,
+                step.color,
+                step.fontFamily,
+                step.align
+              );
+            }
+          } else {
+            workingBytes = await PdfEditAdapter.insertRichText(
+              workingBytes,
+              pages.map((p) => p - 1),
+              text,
+              step.x,
+              step.y,
+              step.fontSize,
+              step.color,
+              step.fontFamily,
+              step.align
+            );
+          }
+        }
+
+        logs.push(`Inserted rich text onto pages: ${pages.join(', ')}`);
         break;
       }
 
@@ -176,15 +283,18 @@ export async function executeMacroRecipe(
         const count = Math.max(1, step.count ?? 1);
         for (let index = 0; index < count; index += 1) {
           const atIndex = await resolveInsertIndex(step.position, ctx.currentPage, pageCount);
-          const size = await resolveBlankPageSize(
-            step.size,
-            workingBytes,
-            atIndex,
-            pageCount,
-          );
 
-          workingBytes = await PdfEditAdapter.insertBlankPage(workingBytes, atIndex, size);
-          pageCount = await PdfEditAdapter.countPages(workingBytes);
+          if (!recipe.dryRun) {
+            const size = await resolveBlankPageSize(
+              step.size,
+              workingBytes,
+              atIndex,
+              pageCount,
+            );
+
+            workingBytes = await PdfEditAdapter.insertBlankPage(workingBytes, atIndex, size);
+            pageCount = await PdfEditAdapter.countPages(workingBytes);
+          }
         }
 
         logs.push(`Inserted ${count} blank page(s)`);
@@ -194,31 +304,35 @@ export async function executeMacroRecipe(
       case 'replace_page': {
         const donor = ctx.donorFiles[step.donorFileId];
         if (!donor) {
-          logs.push(`Skipped replace_page: missing donor file ${step.donorFileId}`);
+          errors.push(`Skipped replace_page: missing donor file ${step.donorFileId}`);
           break;
         }
 
-        workingBytes = await PdfEditAdapter.replacePage(
-          workingBytes,
-          step.targetPage - 1,
-          donor,
-          step.donorPage - 1,
-        );
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.replacePage(
+            workingBytes,
+            step.targetPage - 1,
+            donor,
+            step.donorPage - 1,
+          );
+        }
         logs.push(`Replaced page ${step.targetPage} with donor page ${step.donorPage}`);
         break;
       }
 
       case 'reorder_pages': {
         if (step.order.length !== pageCount) {
-          logs.push('Skipped reorder_pages: order length does not match page count');
+          errors.push('Skipped reorder_pages: order length does not match page count');
           break;
         }
 
-        workingBytes = await PdfEditAdapter.reorderPages(
-          workingBytes,
-          step.order.map((p) => p - 1),
-        );
-        pageCount = await PdfEditAdapter.countPages(workingBytes);
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.reorderPages(
+            workingBytes,
+            step.order.map((p) => p - 1),
+          );
+          pageCount = await PdfEditAdapter.countPages(workingBytes);
+        }
         logs.push('Reordered pages');
         break;
       }
@@ -242,16 +356,49 @@ export async function executeMacroRecipe(
           break;
         }
 
-        workingBytes = await PdfEditAdapter.addHeaderFooterText(workingBytes, {
+        if (!recipe.dryRun) {
+          workingBytes = await PdfEditAdapter.addHeaderFooterText(workingBytes, {
+            pages: pages.map((p) => p - 1),
+            zone: step.zone,
+            text: step.text,
+            align: step.align,
+            marginX: step.marginX,
+            marginY: step.marginY,
+            fontSize: step.fontSize,
+            color: step.color ?? '#374151',
+            opacity: step.opacity ?? 0.9,
+            fileName: ctx.fileName,
+            now: ctx.now,
+            enablePageNumberToken: step.pageNumberToken ?? true,
+            enableFileNameToken: step.fileNameToken ?? false,
+            enableDateToken: step.dateToken ?? false,
+          });
+        }
+
+        logs.push(`Applied ${step.zone} text to pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'draw_text_on_pages': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped draw_text_on_pages: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.drawTextOnPages(workingBytes, {
           pages: pages.map((p) => p - 1),
-          zone: step.zone,
           text: step.text,
-          align: step.align,
-          marginX: step.marginX,
-          marginY: step.marginY,
+          x: step.x,
+          y: step.y,
           fontSize: step.fontSize,
-          color: step.color ?? '#374151',
-          opacity: step.opacity ?? 0.9,
+          color: step.color ?? '#111827',
+          opacity: step.opacity ?? 0.95,
+          align: step.align ?? 'left',
           fileName: ctx.fileName,
           now: ctx.now,
           enablePageNumberToken: step.pageNumberToken ?? true,
@@ -259,7 +406,7 @@ export async function executeMacroRecipe(
           enableDateToken: step.dateToken ?? false,
         });
 
-        logs.push(`Applied ${step.zone} text to pages: ${pages.join(', ')}`);
+        logs.push(`Drew text on pages: ${pages.join(', ')}`);
         break;
       }
 
@@ -354,11 +501,14 @@ export async function executeMacroRecipe(
   }
 
   return {
+    success: errors.length === 0,
+    errors,
     workingBytes,
     pageCount,
     selectedPages,
     logs,
     extractedOutputs,
+    outputs: extractedOutputs,
   };
 }
 

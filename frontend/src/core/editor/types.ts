@@ -8,6 +8,7 @@ export type ActiveTool =
   | 'ellipse'
   | 'freehand'
   | 'stamp'
+  | 'sticky-note'
   | 'comment'
   | 'line'
   | 'arrow'

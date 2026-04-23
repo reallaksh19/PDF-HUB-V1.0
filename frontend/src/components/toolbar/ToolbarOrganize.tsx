@@ -199,6 +199,55 @@ export const ToolbarOrganize: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleBatchRun = async () => {
+    const files = await FileAdapter.pickPdfFiles(true);
+    if (!files.length) {
+      return;
+    }
+
+    const selected = (
+      window.prompt(
+        'Batch recipe: pageNumbers | footer | header | batchText',
+        'pageNumbers',
+      ) || 'pageNumbers'
+    )
+      .trim()
+      .toLowerCase();
+
+    let recipe = BUILTIN_MACROS.add_page_numbers_footer;
+    if (selected === 'footer') {
+      recipe = BUILTIN_MACROS.add_file_date_footer_selected;
+    }
+    if (selected === 'header') {
+      recipe = BUILTIN_MACROS.add_filename_header_selected;
+    }
+    if (selected === 'batchtext') {
+      const text = window.prompt('Batch text', 'REVIEW COPY') ?? 'REVIEW COPY';
+      recipe = {
+        ...BUILTIN_MACROS.batch_text_selected,
+        steps: [
+          {
+            op: 'draw_text_on_pages',
+            selector: { mode: 'all' },
+            text,
+            x: 36,
+            y: 36,
+            fontSize: 16,
+            color: '#b91c1c',
+            opacity: 0.9,
+            align: 'left',
+          },
+        ],
+      };
+    }
+
+    await runMacroRecipeAcrossFiles(
+      recipe,
+      files.map((file) => ({ name: file.name, bytes: file.bytes })),
+      { saveOutputs: true, suffix: '-processed' },
+    );
+  };
+
   return (
     <>
       <InsertBlankPageDialog

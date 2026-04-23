@@ -10,9 +10,11 @@ const ANNOTATION_TYPES: AnnotationType[] = [
   'textbox',
   'highlight',
   'underline',
+  'strikeout',
   'shape',
   'freehand',
   'stamp',
+  'sticky-note',
   'comment',
   'line',
   'arrow',
@@ -28,6 +30,8 @@ export const InspectorPanel: React.FC = () => {
     updateAnnotation,
     updateManyAnnotations,
     deleteSelection,
+    setReviewStatusForSelection,
+    toggleLockSelection,
   } = useAnnotationStore();
 
   const [previousWidth, setPreviousWidth] = useState(18);
@@ -130,6 +134,8 @@ export const InspectorPanel: React.FC = () => {
             annotation={activeAnnotation}
             updateAnnotation={updateAnnotation}
             deleteSelection={deleteSelection}
+            setReviewStatusForSelection={setReviewStatusForSelection}
+            toggleLockSelection={toggleLockSelection}
           />
         )}
 
@@ -153,7 +159,15 @@ const PropertiesTab: React.FC<{
   annotation: PdfAnnotation;
   updateAnnotation: (id: string, data: Partial<PdfAnnotation>) => void;
   deleteSelection: () => void;
-}> = ({ annotation, updateAnnotation, deleteSelection }) => {
+  setReviewStatusForSelection: (status: 'open' | 'resolved' | 'rejected') => void;
+  toggleLockSelection: () => void;
+}> = ({
+  annotation,
+  updateAnnotation,
+  deleteSelection,
+  setReviewStatusForSelection,
+  toggleLockSelection,
+}) => {
   const updateRect = (key: 'x' | 'y' | 'width' | 'height', value: string) => {
     const next = Number(value);
     if (Number.isNaN(next)) {
@@ -206,6 +220,32 @@ const PropertiesTab: React.FC<{
           });
         }}
       />
+
+      <LabeledSelect
+        label="Review Status"
+        value={
+          typeof annotation.data.reviewStatus === 'string'
+            ? annotation.data.reviewStatus
+            : 'open'
+        }
+        onChange={(value) =>
+          setReviewStatusForSelection(value as 'open' | 'resolved' | 'rejected')
+        }
+        options={[
+          { label: 'open', value: 'open' },
+          { label: 'resolved', value: 'resolved' },
+          { label: 'rejected', value: 'rejected' },
+        ]}
+      />
+
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={annotation.data.locked === true}
+          onChange={() => toggleLockSelection()}
+        />
+        Locked
+      </label>
 
       {isTextLike(annotation.type) && (
         <LabeledTextarea
@@ -429,7 +469,13 @@ const MetadataTab: React.FC<{ annotation: PdfAnnotation }> = ({ annotation }) =>
 );
 
 function isTextLike(type: AnnotationType): boolean {
-  return type === 'textbox' || type === 'comment' || type === 'stamp' || type === 'callout';
+  return (
+    type === 'textbox' ||
+    type === 'comment' ||
+    type === 'stamp' ||
+    type === 'callout' ||
+    type === 'sticky-note'
+  );
 }
 
 const SectionTitle: React.FC<{ title: string }> = ({ title }) => (

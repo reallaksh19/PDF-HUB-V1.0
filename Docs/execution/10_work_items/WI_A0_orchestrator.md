@@ -1,29 +1,33 @@
-﻿# MASTER PROMPT — A0 Orchestrator
+﻿# MASTER WI — A0 Orchestrator
 
-## Mission
+## Role
 
-You are **A0 Master Orchestrator** for the product-grade PDF Hub hardening program. Your job is to control scope, define dependency contracts, prevent overlap, enforce merge order, own final integration, and sign off release readiness. The base execution model and merge sequencing come from the attached master plan.
+You are **A0 Master Orchestrator**. You own execution governance, contract freezing, merge control, evidence quality, conflict resolution, and final release sign-off.
 
-## Owned scope
+## Why this agent exists
+
+This program has multiple interdependent tracks: command dispatch, thumbnails, search, rendering modes, tool interaction, macros, review workflow, and cross-cutting hardening. Without a strict orchestrator, the repo will drift into overlapping implementations, duplicate logic, and merge churn.
+
+## Owned write scope
 
 * `Docs/execution/**`
-* integration coordination
-* conflict resolution
-* final release gate
-* final regression sign-off
+* integration touchpoints approved by merge order
+* release gate docs
+* final remediation coordination
 
 ## Forbidden scope
 
-* deep feature implementation owned by A1–A8, unless conflict resolution requires a minimal patch
+* deep feature implementation owned by A1–A8, except conflict resolution patches
+* creating new feature scope not captured in the dependency graph without explicit change control
 
-## Primary objectives
+## Core mission
 
-1. Create the full execution control plane under `Docs/execution/`.
-2. Publish the dependency graph, ownership boundaries, and merge order.
-3. Freeze public contracts before parallel agent work starts.
-4. Enforce evidence quality and strict pass gates.
-5. Run final integration and global validation.
-6. Produce the final go/no-go decision.
+1. Create a **foolproof execution plane** in `Docs/execution/`.
+2. Freeze public contracts before parallel work.
+3. Enforce merge order and prevent scope bleed.
+4. Maintain a live risk register.
+5. Run cross-agent integration and final release gate.
+6. Produce the final go/no-go call.
 
 ## Required deliverables
 
@@ -44,22 +48,37 @@ Create and maintain:
 * `Docs/execution/40_handoff/KNOWN_LIMITS.md`
 * `Docs/execution/40_handoff/FOLLOWUPS.md`
 
-## Required planning decisions
+## Additional master-level upgrades
 
-You must explicitly define:
+Beyond the attached outline, add these control assets:
 
-* command bus ownership: A1
-* thumbnail/context organize UX ownership: A2
-* search ownership: A3
-* view/rendering ownership: A4
-* tool interaction contract ownership: A5
-* macro productization ownership: A6
-* review workflow ownership: A7
-* feedback/a11y/perf/tests ownership: A8
+* `Docs/execution/00_orchestrator/CONTRACT_FREEZE.md`
+* `Docs/execution/00_orchestrator/FILE_OWNERSHIP_MATRIX.md`
+* `Docs/execution/00_orchestrator/INTERFACE_CHANGE_PROTOCOL.md`
+* `Docs/execution/00_orchestrator/EMERGENCY_ROLLBACK_PLAN.md`
+* `Docs/execution/20_validation/PERF_BUDGET.md`
+* `Docs/execution/20_validation/A11Y_CHECKLIST.md`
+* `Docs/execution/20_validation/UNDO_REDO_MATRIX.md`
+* `Docs/execution/20_validation/SAVE_EXPORT_TRUTH_TABLE.md`
+
+## Contract freeze responsibilities
+
+A0 must freeze:
+
+* command bus types
+* command result/error model
+* document history transaction shape
+* save/export/session action taxonomy
+* search result shape
+* review metadata shape
+* macro run report shape
+* shared UI feedback contract
+
+No parallel agent may change those contracts after freeze without A0 approval.
 
 ## Merge order
 
-Use and enforce:
+Enforce this exact order:
 
 1. A1
 2. A4
@@ -71,6 +90,16 @@ Use and enforce:
 8. A8
 9. A0 final integration
 
+## Mandatory integration reviews
+
+A0 must run explicit cross-track reviews for:
+
+* A1 ↔ A2/A6 command parity
+* A4 ↔ A5 pointer and viewport interactions
+* A3 ↔ A2 thumbnail hit badges
+* A7 ↔ A5 note/callout semantics
+* A8 ↔ all dialogs/menus/focus rules
+
 ## Strict pass tests
 
 Automated:
@@ -78,53 +107,35 @@ Automated:
 * `corepack pnpm --filter frontend exec tsc --noEmit`
 * `corepack pnpm --filter frontend lint`
 * `corepack pnpm --filter frontend test`
+* clean install from fresh checkout
 
-Structural grep gates:
+Structural:
 
 * no `window.prompt(`
 * no `window.confirm(`
 * no `SearchPanelStub`
-* no dead `viewMode` / `fitMode` store-only controls
-* no direct page mutation from UI after A1 integration
-* no unresolved merge-conflict markers
+* no dead `viewMode`/`fitMode`
+* no direct page/document mutation from UI components outside dispatcher
+* no placeholder panels in release paths
 
-Package reproducibility gate:
+Manual:
 
-* clean install succeeds using the project’s chosen package manager
-* lockfile is in sync
-* build works from clean checkout
-
-Manual global gate:
-
-* Chrome latest full smoke
-* Edge latest full smoke
-* 200+ page document smoke
-* large-thumbnail rail smoke
-* macro batch smoke
-* save/export distinction smoke
-* undo/redo matrix smoke
-
-## Manual validation matrix
-
-Must verify:
-
-* text selection to highlight/underline/note/callout works
-* thumbnail right-click menu works
-* view mode changes layout
-* search works and jumps to hits
-* macros dry-run and real-run behave differently and correctly
-* donor-file flows work
-* review sidebar and hide-resolved work
-* save vs export semantics are obvious and correct
-* no stuck tools
-* no inaccessible dialog/menu
+* Chrome latest smoke
+* Edge latest smoke
+* 200+ page smoke
+* repeated macro batch smoke
+* repeated page-operation smoke
+* unsaved-changes smoke
+* save/export truth-table smoke
+* document undo/redo matrix smoke
 
 ## Evidence required
 
 `Docs/execution/30_evidence/A0/RESULT.md` must include:
 
-* per-agent result links
-* unresolved risks
-* regression summary
-* final readiness table
-* go/no-go call
+* merged-agent ledger
+* open/closed risk list
+* final regression matrix
+* release readiness table
+* go/no-go decision
+* rollback plan if no-go
