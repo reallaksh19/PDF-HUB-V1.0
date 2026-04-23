@@ -54,6 +54,36 @@ export type MacroStep =
       pageNumberToken?: boolean;
       fileNameToken?: boolean;
       dateToken?: boolean;
+    }
+  | {
+      op: 'insert_image';
+      selector: PageSelector;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      scale?: number;
+      base64Image?: string;
+      donorFileId?: string; // fallback or preferred over base64
+    }
+  | {
+      op: 'inject_rich_text';
+      selector: PageSelector;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      text: string;
+      fontSize: number;
+      fontFamily?: string;
+      fontWeight?: string;
+      fontStyle?: string;
+      color?: string;
+      opacity?: number;
+      textAlign?: 'left' | 'center' | 'right' | 'justify';
+      pageNumberToken?: boolean;
+      fileNameToken?: boolean;
+      dateToken?: boolean;
     };
 
 export interface MacroRecipe {

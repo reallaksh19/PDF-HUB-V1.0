@@ -244,46 +244,97 @@ const StyleTab: React.FC<{
     );
   };
 
+  const isShape = annotation.type === 'rectangle' || annotation.type === 'ellipse' || annotation.type === 'line' || annotation.type === 'arrow';
+  const isLineLike = annotation.type === 'line' || annotation.type === 'arrow';
+
   return (
     <div className="p-4 space-y-4">
       <SectionTitle title="Appearance" />
 
-      <TwoColumnRow>
+      {(!isLineLike) && (
+        <TwoColumnRow>
+          <LabeledColorInput
+            label="Fill Color"
+            value={readColor(annotation.data.fillColor || annotation.data.backgroundColor, '#ffffff')}
+            onChange={(value) => applyToSelection({ fillColor: value, backgroundColor: value })}
+          />
+          <LabeledColorInput
+            label="Stroke Color"
+            value={readColor(annotation.data.strokeColor || annotation.data.borderColor, '#60a5fa')}
+            onChange={(value) => applyToSelection({ strokeColor: value, borderColor: value })}
+          />
+        </TwoColumnRow>
+      )}
+
+      {isLineLike && (
         <LabeledColorInput
-          label="Background"
-          value={readColor(annotation.data.backgroundColor, '#ffffff')}
-          onChange={(value) => applyToSelection({ backgroundColor: value })}
-        />
-        <LabeledColorInput
-          label="Border"
-          value={readColor(annotation.data.borderColor, '#60a5fa')}
-          onChange={(value) => applyToSelection({ borderColor: value })}
-        />
-      </TwoColumnRow>
+            label="Stroke Color"
+            value={readColor(annotation.data.strokeColor || annotation.data.borderColor, '#60a5fa')}
+            onChange={(value) => applyToSelection({ strokeColor: value, borderColor: value })}
+          />
+      )}
 
       <TwoColumnRow>
-        <LabeledColorInput
-          label="Text"
-          value={readColor(annotation.data.textColor, '#0f172a')}
-          onChange={(value) => applyToSelection({ textColor: value })}
-        />
         <LabeledNumberInput
-          label="Border Width"
-          value={typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1}
+          label="Stroke Width"
+          value={typeof annotation.data.strokeWidth === 'number' ? annotation.data.strokeWidth : (typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1)}
           onChange={(value) => {
             const next = Number(value);
             if (Number.isNaN(next)) {
               return;
             }
-            applyToSelection({ borderWidth: next });
+            applyToSelection({ strokeWidth: next, borderWidth: next });
           }}
         />
+        {(isShape || isTextLike(annotation.type)) && (
+          <LabeledSelect
+              label="Stroke Style"
+              value={typeof annotation.data.strokeStyle === 'string' ? annotation.data.strokeStyle : 'solid'}
+              onChange={(value) => applyToSelection({ strokeStyle: value })}
+              options={[
+                { label: 'Solid', value: 'solid' },
+                { label: 'Dashed', value: 'dashed' },
+                { label: 'Dotted', value: 'dotted' },
+              ]}
+            />
+        )}
       </TwoColumnRow>
+
+      {annotation.type === 'arrow' && (
+        <TwoColumnRow>
+          <LabeledSelect
+              label="Arrow Start"
+              value={typeof annotation.data.arrowHeadStart === 'string' ? annotation.data.arrowHeadStart : 'none'}
+              onChange={(value) => applyToSelection({ arrowHeadStart: value })}
+              options={[
+                { label: 'None', value: 'none' },
+                { label: 'Open', value: 'open' },
+                { label: 'Closed', value: 'closed' },
+              ]}
+            />
+             <LabeledSelect
+              label="Arrow End"
+              value={typeof annotation.data.arrowHeadEnd === 'string' ? annotation.data.arrowHeadEnd : 'open'}
+              onChange={(value) => applyToSelection({ arrowHeadEnd: value })}
+              options={[
+                { label: 'None', value: 'none' },
+                { label: 'Open', value: 'open' },
+                { label: 'Closed', value: 'closed' },
+              ]}
+            />
+        </TwoColumnRow>
+      )}
 
       {isTextLike(annotation.type) && (
         <>
+          <SectionTitle title="Text Style" />
           <TwoColumnRow>
-            <LabeledNumberInput
+            <LabeledColorInput
+              label="Text Color"
+              value={readColor(annotation.data.textColor, '#0f172a')}
+              onChange={(value) => applyToSelection({ textColor: value })}
+            />
+             <LabeledNumberInput
               label="Font Size"
               value={typeof annotation.data.fontSize === 'number' ? annotation.data.fontSize : 12}
               onChange={(value) => {
@@ -294,10 +345,24 @@ const StyleTab: React.FC<{
                 applyToSelection({ fontSize: next });
               }}
             />
+          </TwoColumnRow>
 
+          <TwoColumnRow>
+            <LabeledSelect
+              label="Font Family"
+              value={typeof annotation.data.fontFamily === 'string' ? annotation.data.fontFamily : 'inherit'}
+              onChange={(value) => applyToSelection({ fontFamily: value })}
+              options={[
+                { label: 'Default', value: 'inherit' },
+                { label: 'Arial', value: 'Arial, sans-serif' },
+                { label: 'Times New Roman', value: '"Times New Roman", serif' },
+                { label: 'Courier New', value: '"Courier New", serif' },
+                { label: 'Georgia', value: 'Georgia, serif' },
+              ]}
+            />
             <LabeledSelect
               label="Weight"
-              value={typeof annotation.data.fontWeight === 'string' ? annotation.data.fontWeight : 'normal'}
+              value={String(annotation.data.fontWeight || 'normal')}
               onChange={(value) => applyToSelection({ fontWeight: value })}
               options={[
                 { label: 'normal', value: 'normal' },
@@ -306,18 +371,30 @@ const StyleTab: React.FC<{
             />
           </TwoColumnRow>
 
-          <LabeledSelect
-            label="Text Align"
-            value={typeof annotation.data.textAlign === 'string' ? annotation.data.textAlign : 'left'}
-            onChange={(value) => applyToSelection({ textAlign: value })}
-            options={[
-              { label: 'left', value: 'left' },
-              { label: 'center', value: 'center' },
-              { label: 'right', value: 'right' },
-            ]}
-          />
+           <TwoColumnRow>
+            <LabeledSelect
+              label="Text Align"
+              value={typeof annotation.data.textAlign === 'string' ? annotation.data.textAlign : 'left'}
+              onChange={(value) => applyToSelection({ textAlign: value })}
+              options={[
+                { label: 'left', value: 'left' },
+                { label: 'center', value: 'center' },
+                { label: 'right', value: 'right' },
+                { label: 'justify', value: 'justify' },
+              ]}
+            />
+             <LabeledSelect
+              label="Font Style"
+              value={typeof annotation.data.fontStyle === 'string' ? annotation.data.fontStyle : 'normal'}
+              onChange={(value) => applyToSelection({ fontStyle: value })}
+              options={[
+                { label: 'normal', value: 'normal' },
+                { label: 'italic', value: 'italic' },
+              ]}
+            />
+          </TwoColumnRow>
 
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-sm mt-4">
             <input
               type="checkbox"
               checked={annotation.data.autoSize !== false}

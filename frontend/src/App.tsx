@@ -3,6 +3,7 @@ import { WorkspacePage } from '@/pages/WorkspacePage';
 import { DebugPage } from '@/pages/DebugPage';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import '@/core/macro/headlessApi';
 
 const AppContent = () => {
   useKeyboardShortcuts();

@@ -55,13 +55,19 @@ function resolveHeaderFooterTokens(
 
   if (values.enablePageNumberToken) {
     output = output.replaceAll('{page}', String(values.page));
+    output = output.replaceAll('{{page}}', String(values.page));
     output = output.replaceAll('{pages}', String(values.pages));
+    output = output.replaceAll('{{total_pages}}', String(values.pages));
+    output = output.replaceAll('{{pages}}', String(values.pages));
   }
   if (values.enableFileNameToken) {
     output = output.replaceAll('{file}', values.file);
+    output = output.replaceAll('{{file_name}}', values.file);
+    output = output.replaceAll('{{file}}', values.file);
   }
   if (values.enableDateToken) {
     output = output.replaceAll('{date}', values.date);
+    output = output.replaceAll('{{date}}', values.date);
   }
 
   return output;
@@ -275,6 +281,143 @@ export class PdfEditAdapter {
     return await out.save();
   }
 
+  static async insertImage(
+    baseBytes: Uint8Array,
+    options: {
+      pages: number[];
+      imageBytes: Uint8Array;
+      mimeType: 'image/jpeg' | 'image/png';
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      scale?: number;
+    }
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const image = options.mimeType === 'image/jpeg'
+      ? await pdfDoc.embedJpg(options.imageBytes)
+      : await pdfDoc.embedPng(options.imageBytes);
+
+    let drawWidth = image.width;
+    let drawHeight = image.height;
+
+    if (options.width && options.height) {
+      drawWidth = options.width;
+      drawHeight = options.height;
+    } else if (options.scale) {
+      drawWidth = image.width * options.scale;
+      drawHeight = image.height * options.scale;
+    }
+
+    for (const pageIndex of options.pages) {
+      const page = pdfDoc.getPage(pageIndex);
+      const pageHeight = page.getHeight();
+
+      // PDF-lib uses bottom-left origin. y is converted from top-left.
+      const drawY = pageHeight - options.y - drawHeight;
+
+      page.drawImage(image, {
+        x: options.x,
+        y: drawY,
+        width: drawWidth,
+        height: drawHeight,
+      });
+    }
+
+    return await pdfDoc.save();
+  }
+
+  static async injectRichText(
+    baseBytes: Uint8Array,
+    options: {
+      pages: number[];
+      text: string;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      fontSize: number;
+      color: string;
+      opacity: number;
+      fileName: string;
+      now: Date;
+      enablePageNumberToken: boolean;
+      enableFileNameToken: boolean;
+      enableDateToken: boolean;
+      textAlign: 'left' | 'center' | 'right' | 'justify';
+      // Future-proofing: font, weight, etc. can map to StandardFonts or custom
+    }
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    // Basic helvetica for now, could expand to bold/italic based on fontWeight/fontStyle
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const totalPages = pdfDoc.getPageCount();
+
+    for (const pageIndex of options.pages) {
+      const page = pdfDoc.getPage(pageIndex);
+      const width = page.getWidth();
+      const height = page.getHeight();
+
+      const text = resolveHeaderFooterTokens(options.text, {
+        page: pageIndex + 1,
+        pages: totalPages,
+        file: options.fileName,
+        date: options.now.toLocaleDateString(),
+        enablePageNumberToken: options.enablePageNumberToken,
+        enableFileNameToken: options.enableFileNameToken,
+        enableDateToken: options.enableDateToken,
+      });
+
+      const maxWidth = options.width ?? (width - options.x);
+
+      // Simple text wrapping simulation
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let currentLine = words[0];
+
+      for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const testLine = currentLine + ' ' + word;
+        const testWidth = font.widthOfTextAtSize(testLine, options.fontSize);
+        if (testWidth > maxWidth && i > 0) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      lines.push(currentLine);
+
+      // PDF-lib uses bottom-left origin.
+      let drawY = height - options.y - options.fontSize;
+
+      for (const line of lines) {
+        const lineWidth = font.widthOfTextAtSize(line, options.fontSize);
+        let drawX = options.x;
+        if (options.textAlign === 'center') {
+          drawX = options.x + (maxWidth - lineWidth) / 2;
+        } else if (options.textAlign === 'right') {
+          drawX = options.x + maxWidth - lineWidth;
+        }
+
+        page.drawText(line, {
+          x: drawX,
+          y: drawY,
+          font,
+          size: options.fontSize,
+          color: hexToRgb(options.color),
+          opacity: options.opacity,
+          maxWidth
+        });
+
+        drawY -= options.fontSize * 1.2; // roughly 1.2 line height
+      }
+    }
+
+    return await pdfDoc.save();
+  }
+
   static async addHeaderFooterText(
     baseBytes: Uint8Array,
     options: HeaderFooterOptions,
@@ -378,14 +521,28 @@ export class PdfEditAdapter {
         continue;
       }
 
-      if (annotation.type === 'shape') {
+      if (annotation.type === 'rectangle') {
         page.drawRectangle({
           x,
           y,
           width: annotation.rect.width,
           height: annotation.rect.height,
-          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
+          borderWidth: typeof annotation.data.strokeWidth === 'number' ? annotation.data.strokeWidth : (typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1),
           borderColor,
+          color: backgroundColor,
+        });
+        continue;
+      }
+
+      if (annotation.type === 'ellipse') {
+        page.drawEllipse({
+          x: x + annotation.rect.width / 2,
+          y: y + annotation.rect.height / 2,
+          xScale: annotation.rect.width / 2,
+          yScale: annotation.rect.height / 2,
+          borderWidth: typeof annotation.data.strokeWidth === 'number' ? annotation.data.strokeWidth : (typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1),
+          borderColor,
+          color: backgroundColor,
         });
         continue;
       }
