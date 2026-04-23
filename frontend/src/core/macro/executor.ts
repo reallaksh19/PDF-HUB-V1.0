@@ -17,21 +17,6 @@ export async function executeMacroRecipe(
   const logs: string[] = [];
   const extractedOutputs: Array<{ name: string; bytes: Uint8Array }> = [];
 
-  // Pre-flight check for missing donor files to fail early if missing
-  for (const step of recipe.steps) {
-    if (step.op === 'insert_pdf' || step.op === 'replace_page') {
-      if (!ctx.donorFiles[step.donorFileId]) {
-        throw new Error(`Missing donor file for step ${step.op} (expected ID: ${step.donorFileId})`);
-      }
-    }
-    if (step.op === 'merge_files') {
-      const missing = step.donorFileIds.filter((id) => !ctx.donorFiles[id]);
-      if (missing.length > 0) {
-        throw new Error(`Missing donor files for merge_files: ${missing.join(', ')}`);
-      }
-    }
-  }
-
   for (const step of recipe.steps) {
     switch (step.op) {
       case 'select_pages': {
@@ -284,11 +269,11 @@ export async function executeMacroRecipe(
   }
 
   return {
-    workingBytes: recipe.dryRun ? ctx.workingBytes : workingBytes,
-    pageCount: recipe.dryRun ? ctx.pageCount : pageCount,
-    selectedPages: recipe.dryRun ? ctx.selectedPages : selectedPages,
+    workingBytes,
+    pageCount,
+    selectedPages,
     logs,
-    extractedOutputs: recipe.dryRun ? [] : extractedOutputs,
+    extractedOutputs,
   };
 }
 

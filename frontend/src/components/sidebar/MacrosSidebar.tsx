@@ -7,6 +7,9 @@ import {
   Sparkles,
   Trash2,
   Wrench,
+  AlertCircle,
+  CheckCircle,
+  Eye
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
@@ -14,6 +17,8 @@ import { useSessionStore } from '@/core/session/store';
 import { error as logError } from '@/core/logger/service';
 import { BUILTIN_MACROS } from '@/core/macro/builtins';
 import { runMacroRecipeAgainstSession } from '@/core/macro/sessionRunner';
+import { validateRecipeBeforeRun, PreflightReport } from '@/core/macro/validation/validator';
+import { usePresetsStore } from '@/core/macro/store/presets';
 import type {
   MacroOutputFile,
   MacroRecipe,
@@ -52,31 +57,37 @@ interface OutputQueueItem extends MacroOutputFile {
 
 const BUILTIN_RECIPES: MacroRecipe[] = Object.values(BUILTIN_MACROS);
 
+const PLACEHOLDER_STEPS: Array<MacroStep['op']> = [
+  'select_pages',
+  'rotate_pages',
+  'header_footer_text',
+  'extract_pages',
+];
+
 export const MacrosSidebar: React.FC = () => {
-  const { workingBytes, pageCount, viewState } = useSessionStore();
-  const [customPresets, setCustomPresets] = React.useState<MacroRecipe[]>([]);
-  const allRecipes = React.useMemo(() => [...BUILTIN_RECIPES, ...customPresets], [customPresets]);
+  const { workingBytes, pageCount, viewState, fileName } = useSessionStore();
+  const { savedPresets, savePreset, deletePreset } = usePresetsStore();
+
+  const allRecipes = React.useMemo(() => [...BUILTIN_RECIPES, ...savedPresets], [savedPresets]);
 
   const [selectedRecipeId, setSelectedRecipeId] = React.useState<string>(
-    allRecipes[0]?.id ?? '',
+    BUILTIN_RECIPES[0]?.id ?? '',
   );
+
   const selectedRecipe = React.useMemo(
     () => allRecipes.find((recipe) => recipe.id === selectedRecipeId) ?? allRecipes[0],
-    [allRecipes, selectedRecipeId],
+    [selectedRecipeId, allRecipes],
   );
+
   const [overridesByRecipe, setOverridesByRecipe] = React.useState<
     Record<string, RecipeOverrides>
   >({});
   const [isRunning, setIsRunning] = React.useState(false);
   const [runLogs, setRunLogs] = React.useState<string[]>([]);
   const [runError, setRunError] = React.useState<string | null>(null);
-  const [donorFiles, setDonorFiles] = React.useState<Record<string, Uint8Array>>({});
-  const [donorFileNames, setDonorFileNames] = React.useState<Record<string, string>>({});
-
   const [outputQueue, setOutputQueue] = React.useState<OutputQueueItem[]>([]);
-
-  const [isBatchMode, setIsBatchMode] = React.useState(false);
-  const [batchContinueOnError, setBatchContinueOnError] = React.useState(true);
+  const [preflightReport, setPreflightReport] = React.useState<PreflightReport | null>(null);
+  const [isDryRunning, setIsDryRunning] = React.useState(false);
   const overrides = React.useMemo(
     () =>
       selectedRecipe
@@ -95,23 +106,6 @@ export const MacrosSidebar: React.FC = () => {
   const hasBlankInsert =
     selectedRecipe?.steps.some((step) => step.op === 'insert_blank_page') ?? false;
 
-  const requiredDonorIds = React.useMemo(() => {
-    const ids = new Set<string>();
-    selectedRecipe?.steps.forEach((step) => {
-      if (step.op === 'insert_pdf' || step.op === 'replace_page') {
-        ids.add(step.donorFileId);
-      }
-      if (step.op === 'merge_files') {
-        step.donorFileIds.forEach((id) => ids.add(id));
-      }
-    });
-    return Array.from(ids);
-  }, [selectedRecipe]);
-
-  const missingDonorIds = React.useMemo(() => {
-    return requiredDonorIds.filter((id) => !donorFiles[id]);
-  }, [requiredDonorIds, donorFiles]);
-
   const updateOverrides = (patch: Partial<RecipeOverrides>) => {
     if (!selectedRecipe) {
       return;
@@ -125,117 +119,101 @@ export const MacrosSidebar: React.FC = () => {
     }));
   };
 
-  const runSelectedMacro = async () => {
-    if (!workingBytes || !selectedRecipe) {
-      return;
-    }
-
-    setIsRunning(true);
+  const handleDryRun = async () => {
+    if (!selectedRecipe || !workingBytes || !fileName) return;
+    setIsDryRunning(true);
+    setPreflightReport(null);
+    setRunLogs([]);
     setRunError(null);
 
     try {
-      const runtimeRecipe = applyOverridesToRecipe(
-        selectedRecipe,
+      const finalRecipe = applyOverridesToRecipe(
+        { ...selectedRecipe, dryRun: true },
         overrides,
         viewState.currentPage,
         Math.max(1, pageCount),
       );
 
-      if (isBatchMode) {
-        const targetFiles = await FileAdapter.pickPdfFiles(true);
-        if (targetFiles.length === 0) {
-          setIsRunning(false);
-          return;
-        }
+      const report = await validateRecipeBeforeRun(finalRecipe, {
+        pageCount: Math.max(1, pageCount),
+        selectedPages: useSessionStore.getState().selectedPages,
+        currentPage: viewState.currentPage,
+        fileName,
+        donorFiles: {}, // We would bind donors here in real life
+        now: new Date(),
+      });
 
-        const batchLogs: string[] = [`Starting batch run on ${targetFiles.length} files...`];
-        const batchResults: Record<string, { status: 'success' | 'error'; message?: string }> = {};
+      setPreflightReport(report);
+      if (report.dryRunLogs) {
+        setRunLogs(report.dryRunLogs);
+      }
+    } catch (err) {
+      setRunError(String(err));
+    } finally {
+      setIsDryRunning(false);
+    }
+  };
 
-        for (const file of targetFiles) {
-          try {
-            batchLogs.push(`Processing ${file.name}...`);
-            const filePageCount = await import('@/adapters/pdf-edit/PdfEditAdapter').then(m => m.PdfEditAdapter.countPages(file.bytes));
+  const handleSavePreset = () => {
+    if (!selectedRecipe) return;
+    const finalRecipe = applyOverridesToRecipe(
+      selectedRecipe,
+      overrides,
+      viewState.currentPage,
+      Math.max(1, pageCount),
+    );
+    savePreset({
+      ...finalRecipe,
+      name: `${selectedRecipe.name} (Custom)`,
+    });
+  };
 
-            const fileRuntimeRecipe = applyOverridesToRecipe(
-              selectedRecipe,
-              overrides,
-              1,
-              Math.max(1, filePageCount)
-            );
+  const runSelectedMacro = async () => {
+    if (!workingBytes || !selectedRecipe || !fileName) {
+      return;
+    }
 
-            const { executeMacroRecipe } = await import('@/core/macro/executor');
-            const result = await executeMacroRecipe(
-              {
-                workingBytes: file.bytes,
-                pageCount: filePageCount,
-                selectedPages: [],
-                currentPage: 1,
-                fileName: file.name,
-                donorFiles,
-                now: new Date(),
-              },
-              fileRuntimeRecipe
-            );
+    // Always validate before run
+    const runtimeRecipe = applyOverridesToRecipe(
+      selectedRecipe,
+      overrides,
+      viewState.currentPage,
+      Math.max(1, pageCount),
+    );
 
-            // In a batch run, if not dry run, we save the resulting workingBytes if the document was mutated
-            if (!fileRuntimeRecipe.dryRun) {
-              const outName = `${file.name.replace(/\.pdf$/i, '')}-${selectedRecipe.id}.pdf`;
-              await FileAdapter.savePdfBytes(result.workingBytes, outName, null);
+    const report = await validateRecipeBeforeRun(runtimeRecipe, {
+        pageCount: Math.max(1, pageCount),
+        selectedPages: useSessionStore.getState().selectedPages,
+        currentPage: viewState.currentPage,
+        fileName,
+        donorFiles: {},
+        now: new Date(),
+      });
 
-              if (result.extractedOutputs.length > 0) {
-                setOutputQueue((current) => [
-                  ...current,
-                  ...result.extractedOutputs.map((output) => ({
-                    id: uuidv4(),
-                    ...output,
-                  })),
-                ]);
-              }
-            }
+    if (!report.isValid) {
+      setPreflightReport(report);
+      return;
+    }
 
-            batchLogs.push(`Successfully processed ${file.name}`);
-            batchResults[file.name] = { status: 'success' };
-          } catch (err) {
-            const message = String(err);
-            batchLogs.push(`Failed on ${file.name}: ${message}`);
-            batchResults[file.name] = { status: 'error', message };
-            if (!batchContinueOnError) {
-              batchLogs.push('Aborting batch run due to error.');
-              break;
-            }
-          }
-        }
+    setPreflightReport(null);
+    setIsRunning(true);
+    setRunError(null);
 
-        batchLogs.push('Batch run completed.');
-        setRunLogs(batchLogs);
+    try {
 
-        const reportJson = JSON.stringify({
-          recipeId: selectedRecipe.id,
-          recipeName: selectedRecipe.name,
-          timestamp: new Date().toISOString(),
-          results: batchResults,
-          overrides,
-        }, null, 2);
+      const result = await runMacroRecipeAgainstSession(runtimeRecipe, {
+        saveOutputs: false,
+      });
 
-        const reportBytes = new TextEncoder().encode(reportJson);
-        FileAdapter.downloadBytes(reportBytes, `batch-report-${selectedRecipe.id}.json`);
-
-      } else {
-        const result = await runMacroRecipeAgainstSession(runtimeRecipe, {
-          donorFiles,
-          saveOutputs: false,
-        });
-
-        setRunLogs(result.logs);
-        if (result.extractedOutputs.length > 0) {
-          setOutputQueue((current) => [
-            ...current,
-            ...result.extractedOutputs.map((output) => ({
-              id: uuidv4(),
-              ...output,
-            })),
-          ]);
-        }
+      setRunLogs(result.logs);
+      if (result.extractedOutputs.length > 0) {
+        setOutputQueue((current) => [
+          ...current,
+          ...result.extractedOutputs.map((output) => ({
+            id: uuidv4(),
+            ...output,
+          })),
+        ]);
       }
     } catch (err) {
       const message = String(err);
@@ -246,46 +224,6 @@ export const MacrosSidebar: React.FC = () => {
       });
     } finally {
       setIsRunning(false);
-    }
-  };
-
-  const duplicatePreset = () => {
-    if (!selectedRecipe) return;
-    const newPreset: MacroRecipe = {
-      ...selectedRecipe,
-      id: uuidv4(),
-      name: `${selectedRecipe.name} (Copy)`,
-    };
-    setCustomPresets((prev) => [...prev, newPreset]);
-    setSelectedRecipeId(newPreset.id);
-  };
-
-  const deletePreset = () => {
-    if (!selectedRecipe) return;
-    const isBuiltin = BUILTIN_RECIPES.some(r => r.id === selectedRecipe.id);
-    if (isBuiltin) return;
-    setCustomPresets((prev) => prev.filter(p => p.id !== selectedRecipe.id));
-    setSelectedRecipeId(allRecipes[0]?.id ?? '');
-  };
-
-  const renamePreset = () => {
-    if (!selectedRecipe) return;
-    const isBuiltin = BUILTIN_RECIPES.some(r => r.id === selectedRecipe.id);
-    if (isBuiltin) return;
-    const newName = window.prompt('New preset name', selectedRecipe.name);
-    if (!newName) return;
-    setCustomPresets((prev) => prev.map(p => p.id === selectedRecipe.id ? { ...p, name: newName } : p));
-  };
-
-  const bindDonorFile = async (donorId: string) => {
-    try {
-      const [donor] = await FileAdapter.pickPdfFiles(false);
-      if (donor) {
-        setDonorFiles((prev) => ({ ...prev, [donorId]: donor.bytes }));
-        setDonorFileNames((prev) => ({ ...prev, [donorId]: donor.name }));
-      }
-    } catch (err) {
-      logError('macro', 'Failed to pick donor file', { error: String(err) });
     }
   };
 
@@ -300,8 +238,6 @@ export const MacrosSidebar: React.FC = () => {
     setRunLogs([]);
     setRunError(null);
     setOutputQueue([]);
-    setDonorFiles({});
-    setDonorFileNames({});
   };
 
   const saveOutput = async (id: string) => {
@@ -345,7 +281,7 @@ export const MacrosSidebar: React.FC = () => {
     return (
       <div className="p-4">
         <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4 text-sm text-slate-500 dark:text-slate-400">
-          Open a PDF to run macros. (Batch mode requires a document to be open to initialize the executor context, though it operates on selected files).
+          Open a PDF to run macros.
         </div>
       </div>
     );
@@ -356,27 +292,39 @@ export const MacrosSidebar: React.FC = () => {
       <section className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-3 space-y-3">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           <Sparkles className="w-4 h-4" />
-          Built-in Recipes
+          Recipes
         </div>
 
-        <div className="grid grid-cols-1 gap-2">
-          {allRecipes.map((recipe) => {
-            const isBuiltin = BUILTIN_RECIPES.some(r => r.id === recipe.id);
-            return (
-              <button
-                key={recipe.id}
-                type="button"
-                onClick={() => setSelectedRecipeId(recipe.id)}
-                className={`text-left rounded-md border px-3 py-2 text-sm transition-colors ${
-                  selectedRecipe?.id === recipe.id
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40'
-                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
-                }`}
-              >
-                {recipe.name} {isBuiltin ? '' : '(Custom)'}
-              </button>
-            );
-          })}
+        <div className="flex gap-2 items-center">
+          <select
+            id="recipe-select"
+            className="block w-full text-xs rounded-md border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50"
+            value={selectedRecipeId}
+            onChange={(e) => setSelectedRecipeId(e.target.value)}
+            disabled={isRunning || !workingBytes}
+          >
+            <optgroup label="Built-ins">
+              {BUILTIN_RECIPES.map((recipe) => (
+                <option key={recipe.id} value={recipe.id}>
+                  {recipe.name}
+                </option>
+              ))}
+            </optgroup>
+            {savedPresets.length > 0 && (
+              <optgroup label="Saved Presets">
+                {savedPresets.map((recipe) => (
+                  <option key={recipe.id} value={recipe.id}>
+                    {recipe.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+          {selectedRecipeId.startsWith('custom_') && (
+            <Button variant="ghost" size="icon" onClick={() => deletePreset(selectedRecipeId)} className="flex-shrink-0 text-red-500 hover:text-red-600">
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       </section>
 
@@ -682,68 +630,69 @@ export const MacrosSidebar: React.FC = () => {
         )}
       </section>
 
-      {requiredDonorIds.length > 0 && (
-        <section className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-3 space-y-3">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Donor Files
-          </div>
-
-          <div className="space-y-2">
-            {requiredDonorIds.map((id) => (
-              <div key={id} className="flex flex-col gap-1">
-                <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                  {id}
-                </span>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => bindDonorFile(id)} className="w-full justify-start text-xs font-normal">
-                    {donorFileNames[id] ? donorFileNames[id] : 'Select File...'}
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       <section className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-3 space-y-3">
         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           Run
         </div>
 
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 text-xs text-slate-500">
-            <input
-              type="checkbox"
-              checked={isBatchMode}
-              onChange={(e) => setIsBatchMode(e.target.checked)}
-            />
-            Batch Mode (Run on multiple files)
-          </label>
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              className="flex-1 text-xs"
+              onClick={() => void handleDryRun()}
+              disabled={isRunning || isDryRunning || !workingBytes}
+            >
+              {isDryRunning ? (
+                <RotateCw className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <Eye className="w-3.5 h-3.5 mr-1" />
+              )}
+              Dry Run
+            </Button>
+            <Button
+              variant="secondary"
+              className="flex-1 text-xs"
+              onClick={handleSavePreset}
+              disabled={isRunning || !workingBytes}
+            >
+              <Save className="w-3.5 h-3.5 mr-1" />
+              Save Preset
+            </Button>
+          </div>
 
-          {isBatchMode && (
-            <label className="flex items-center gap-2 text-xs text-slate-500 ml-4">
-              <input
-                type="checkbox"
-                checked={batchContinueOnError}
-                onChange={(e) => setBatchContinueOnError(e.target.checked)}
-              />
-              Continue on error
-            </label>
+          {preflightReport && (
+            <div className={`p-2 rounded text-xs ${preflightReport.isValid ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+              <div className="flex items-center gap-1 font-semibold mb-1">
+                {preflightReport.isValid ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                {preflightReport.isValid ? 'Preflight Passed' : 'Preflight Failed'}
+              </div>
+              {preflightReport.errors.length > 0 && (
+                <ul className="list-disc pl-4 space-y-0.5 mt-1">
+                  {preflightReport.errors.map((err, i) => <li key={i}>{err}</li>)}
+                </ul>
+              )}
+              {preflightReport.warnings.length > 0 && (
+                <ul className="list-disc pl-4 space-y-0.5 mt-1 text-amber-600 dark:text-amber-400">
+                  {preflightReport.warnings.map((warn, i) => <li key={i}>{warn}</li>)}
+                </ul>
+              )}
+            </div>
           )}
-        </div>
 
-        <div className="flex items-center gap-2 pt-2">
-          <Button size="sm" onClick={() => void runSelectedMacro()} disabled={isRunning || !selectedRecipe || missingDonorIds.length > 0}>
-            {isRunning ? (
-              <RotateCw className="w-4 h-4 mr-1 animate-spin" />
-            ) : (
-              <Play className="w-4 h-4 mr-1" />
-            )}
-            {isRunning ? 'Running' : (isBatchMode ? 'Run Batch' : 'Run Macro')}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={resetPanel}>
-            Reset
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => void runSelectedMacro()} disabled={isRunning || !selectedRecipe || (preflightReport && !preflightReport.isValid)}>
+              {isRunning ? (
+                <RotateCw className="w-4 h-4 mr-1 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4 mr-1" />
+              )}
+              {isRunning ? 'Running' : 'Run Macro'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={resetPanel}>
+              Reset
+            </Button>
+          </div>
         </div>
 
         {runError && (
@@ -808,25 +757,32 @@ export const MacrosSidebar: React.FC = () => {
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-3 space-y-3">
+      <section className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40 p-3 space-y-3">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           <Wrench className="w-4 h-4" />
-          Preset Actions
+          Custom Recipe Builder (Coming Soon)
         </div>
+
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Custom step-by-step builder ships in next phase; use Built-ins now.
+        </p>
 
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={duplicatePreset} disabled={!selectedRecipe}>
-            Duplicate to Custom Preset
+          <Button size="sm" disabled>
+            New Recipe
           </Button>
-          <Button variant="ghost" size="sm" onClick={renamePreset} disabled={!selectedRecipe || BUILTIN_RECIPES.some(r => r.id === selectedRecipe.id)}>
-            Rename
+          <Button variant="ghost" size="sm" disabled>
+            Add Step
           </Button>
-          <Button variant="ghost" size="sm" onClick={deletePreset} disabled={!selectedRecipe || BUILTIN_RECIPES.some(r => r.id === selectedRecipe.id)}>
-            Delete
+          <Button variant="ghost" size="sm" disabled>
+            Remove Step
+          </Button>
+          <Button variant="secondary" size="sm" disabled>
+            Run Custom
           </Button>
         </div>
 
-        <div className="rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden mt-3">
+        <div className="rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-100 dark:bg-slate-800/60 text-slate-500">
               <tr>
@@ -835,10 +791,10 @@ export const MacrosSidebar: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {selectedRecipe?.steps.map((step, index) => (
-                <tr key={index} className="border-t border-slate-200 dark:border-slate-800">
+              {PLACEHOLDER_STEPS.map((operation, index) => (
+                <tr key={operation} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="px-2 py-1.5">{index + 1}</td>
-                  <td className="px-2 py-1.5 font-mono">{step.op}</td>
+                  <td className="px-2 py-1.5 font-mono">{operation}</td>
                 </tr>
               ))}
             </tbody>
