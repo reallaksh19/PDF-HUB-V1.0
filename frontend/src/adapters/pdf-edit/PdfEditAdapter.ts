@@ -243,19 +243,44 @@ export class PdfEditAdapter {
   }
 
   static async movePage(baseBytes: Uint8Array, fromIndex: number, toIndex: number): Promise<Uint8Array> {
+    return this.movePagesAsBlock(baseBytes, [fromIndex], toIndex, 'before');
+  }
+
+  static async movePagesAsBlock(
+    baseBytes: Uint8Array,
+    pageIndices: number[], // 0-based
+    targetIndex: number, // 0-based
+    placement: 'before' | 'after' | 'append'
+  ): Promise<Uint8Array> {
     const srcDoc = await PDFDocument.load(baseBytes);
     const pageCount = srcDoc.getPageCount();
 
-    if (fromIndex < 0 || fromIndex >= pageCount || toIndex < 0 || toIndex >= pageCount) {
-      throw new Error('Page move indices are out of range');
+    // Dynamically import the pure helper to keep adapter decoupled, or just inline the logic.
+    // For now, let's just implement the zero-based version inline here, or call the 1-based helper if imported.
+    const allPages = Array.from({ length: pageCount }, (_, i) => i);
+    const selectedSet = new Set(pageIndices);
+
+    const validSelected = pageIndices.filter(p => p >= 0 && p < pageCount);
+    if (validSelected.length === 0) return baseBytes;
+
+    const remainingPages = allPages.filter(p => !selectedSet.has(p));
+    let insertIndex = remainingPages.length;
+
+    if (placement !== 'append') {
+      const remainingTargetIndex = remainingPages.indexOf(targetIndex);
+      if (remainingTargetIndex !== -1) {
+        insertIndex = placement === 'before' ? remainingTargetIndex : remainingTargetIndex + 1;
+      }
     }
 
-    const order = srcDoc.getPageIndices();
-    const [moved] = order.splice(fromIndex, 1);
-    order.splice(toIndex, 0, moved);
+    const newOrder = [
+      ...remainingPages.slice(0, insertIndex),
+      ...validSelected,
+      ...remainingPages.slice(insertIndex)
+    ];
 
     const out = await PDFDocument.create();
-    const copied = await out.copyPages(srcDoc, order);
+    const copied = await out.copyPages(srcDoc, newOrder);
     copied.forEach((page) => out.addPage(page));
     return await out.save();
   }

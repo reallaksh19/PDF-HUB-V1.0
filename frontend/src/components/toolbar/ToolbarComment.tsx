@@ -3,6 +3,7 @@ import {
   Type,
   Highlighter,
   Square,
+  Circle,
   Stamp,
   MessageSquare,
   Undo,
@@ -64,6 +65,12 @@ export const ToolbarComment: React.FC = () => {
       <Tooltip content="Rectangle">
         <Button variant={getToolVariant('rectangle')} size="icon" onClick={() => handleToolClick('rectangle')}>
           <Square className="w-4 h-4" />
+        </Button>
+      </Tooltip>
+
+      <Tooltip content="Ellipse">
+        <Button variant={getToolVariant('ellipse')} size="icon" onClick={() => handleToolClick('ellipse')}>
+          <Circle className="w-4 h-4" />
         </Button>
       </Tooltip>
 

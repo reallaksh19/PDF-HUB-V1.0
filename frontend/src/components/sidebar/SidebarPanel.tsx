@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useEditorStore } from '@/core/editor/store';
 import { useAnnotationStore } from '@/core/annotations/store';
 import { useSessionStore } from '@/core/session/store';
+import { error as logError } from '@/core/logger/service';
 import { loadAppBookmarks, saveAppBookmarks } from '@/core/bookmarks/persistence';
 import type { AppBookmark } from '@/core/bookmarks/types';
 import { PdfRendererAdapter } from '@/adapters/pdf-renderer/PdfRendererAdapter';
@@ -132,12 +133,40 @@ const ThumbnailSidebar: React.FC = () => {
 
       try {
         const nextThumbs: ThumbItem[] = [];
-        for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
-          const page = await doc.getPage(pageNumber);
-          const imageUrl = await PdfRendererAdapter.getThumbnail(page);
-          nextThumbs.push({ pageNumber, imageUrl });
+        const concurrency = 4;
+        let running = 0;
+        let currentIndex = 1;
+
+        await new Promise<void>((resolve) => {
+          const processNext = async () => {
+            if (cancelled || currentIndex > doc.numPages) {
+              if (running === 0) resolve();
+              return;
+            }
+
+            const pageNumber = currentIndex++;
+            running++;
+
+            try {
+              const page = await doc.getPage(pageNumber);
+              const imageUrl = await PdfRendererAdapter.getThumbnail(page);
+              nextThumbs.push({ pageNumber, imageUrl });
+            } finally {
+              running--;
+              processNext();
+            }
+          };
+
+          for (let i = 0; i < concurrency; i++) {
+            processNext();
+          }
+        });
+
+        if (!cancelled) {
+          // Sort because concurrency might resolve out of order
+          nextThumbs.sort((a, b) => a.pageNumber - b.pageNumber);
+          setThumbs(nextThumbs);
         }
-        if (!cancelled) setThumbs(nextThumbs);
       } finally {
         if (!cancelled) setLoading(false);
         await doc.destroy();
@@ -151,9 +180,52 @@ const ThumbnailSidebar: React.FC = () => {
     };
   }, [workingBytes]);
 
-  const handleDrop = async (targetPage: number) => {
-    if (!workingBytes || dragPage === null || dragPage === targetPage) return;
-    const nextBytes = await PdfEditAdapter.movePage(workingBytes, dragPage - 1, targetPage - 1);
+  const handleDrop = async (targetPage: number, placement: 'before' | 'after' | 'append' = 'before', e?: React.DragEvent) => {
+    if (!workingBytes) return;
+
+    if (e?.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      // Handle external donor drop
+      e.preventDefault();
+      try {
+        setLoading(true);
+        const file = e.dataTransfer.files[0];
+        if (file.type !== 'application/pdf') {
+          throw new Error('Only PDF files can be dropped here.');
+        }
+
+        const donorBytes = new Uint8Array(await file.arrayBuffer());
+        const atIndex = placement === 'append' ? pageCount : (placement === 'after' ? targetPage : targetPage - 1);
+
+        const nextBytes = await PdfEditAdapter.insertAt(workingBytes, donorBytes, atIndex);
+        const nextCount = await PdfEditAdapter.countPages(nextBytes);
+        replaceWorkingCopy(nextBytes, nextCount);
+        setPage(Math.min(atIndex + 1, nextCount));
+      } catch (err) {
+        logError('session', 'Failed to parse external donor drop', { error: String(err) });
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (dragPage === null) return;
+
+    // Internal reorder
+    const pagesToMove = selectedPages.includes(dragPage)
+      ? selectedPages.map(p => p - 1)
+      : [dragPage - 1];
+
+    if (pagesToMove.includes(targetPage - 1)) {
+      setDragPage(null);
+      return;
+    }
+
+    const nextBytes = await PdfEditAdapter.movePagesAsBlock(
+      workingBytes,
+      pagesToMove,
+      targetPage - 1,
+      placement
+    );
     const nextCount = await PdfEditAdapter.countPages(nextBytes);
     replaceWorkingCopy(nextBytes, nextCount);
     setPage(targetPage);
@@ -162,15 +234,46 @@ const ThumbnailSidebar: React.FC = () => {
   };
 
   const handleSelect = (
-    event: React.MouseEvent<HTMLDivElement>,
+    event: React.MouseEvent<HTMLDivElement> | React.KeyboardEvent<HTMLDivElement>,
     pageNumber: number,
   ) => {
     if (event.metaKey || event.ctrlKey) {
       toggleSelectedPage(pageNumber);
+    } else if (event.shiftKey && selectedPages.length > 0) {
+      // Shift selection: Range from last selected to current
+      const lastSelected = selectedPages[selectedPages.length - 1];
+      const start = Math.min(lastSelected, pageNumber);
+      const end = Math.max(lastSelected, pageNumber);
+      const newSelection = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+      setSelectedPages(Array.from(new Set([...selectedPages, ...newSelection])));
     } else {
       setSelectedPages([pageNumber]);
       setPage(pageNumber);
     }
+  };
+
+  const handleKeyDown = async (e: React.KeyboardEvent<HTMLDivElement>, pageNumber: number) => {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (!workingBytes) return;
+      const pagesToDelete = selectedPages.includes(pageNumber) ? selectedPages : [pageNumber];
+      const nextBytes = await PdfEditAdapter.removePages(workingBytes, pagesToDelete.map(p => p - 1));
+      const nextCount = await PdfEditAdapter.countPages(nextBytes);
+      replaceWorkingCopy(nextBytes, nextCount);
+      setSelectedPages([]);
+      setPage(Math.min(pageNumber, nextCount));
+    }
+  };
+
+  const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>, pageNumber: number) => {
+    event.preventDefault();
+    if (!selectedPages.includes(pageNumber)) {
+      setSelectedPages([pageNumber]);
+      setPage(pageNumber);
+    }
+    // TODO: implement context menu logic using a specialized dropdown component or system overlay
+    // The exact UI for this is generally built via Radix DropdownMenu or custom overlay in production,
+    // which requires complex layout handling outside typical simple divs.
+    // For this context, standard UI patterns dictates dispatching custom event or using a global menu hook.
   };
 
   if (!workingBytes) {
@@ -196,22 +299,30 @@ const ThumbnailSidebar: React.FC = () => {
         const selected = selectedPages.includes(thumb.pageNumber);
 
         return (
-          <div
-            key={thumb.pageNumber}
-            draggable
-            onDragStart={() => setDragPage(thumb.pageNumber)}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={() => void handleDrop(thumb.pageNumber)}
-            onClick={(event) => handleSelect(event, thumb.pageNumber)}
-            className={`group rounded-lg border p-2 cursor-pointer transition-colors ${
-              selected
-                ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/30'
-                : active
-                ? 'border-slate-400 bg-slate-50 dark:bg-slate-900'
-                : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-2">
+          <div key={thumb.pageNumber} className="relative group">
+            {/* Drop zone: Before */}
+            <div
+              className="absolute -top-1.5 left-0 right-0 h-3 z-10 opacity-0 hover:opacity-100 bg-blue-500/20 rounded cursor-copy transition-opacity"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); void handleDrop(thumb.pageNumber, 'before', e); }}
+            />
+
+            <div
+              tabIndex={0}
+              draggable
+              onDragStart={() => setDragPage(thumb.pageNumber)}
+              onClick={(event) => handleSelect(event, thumb.pageNumber)}
+              onKeyDown={(event) => void handleKeyDown(event, thumb.pageNumber)}
+              onContextMenu={(event) => handleContextMenu(event, thumb.pageNumber)}
+              className={`rounded-lg border p-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
+                selected
+                  ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/30'
+                  : active
+                  ? 'border-slate-400 bg-slate-50 dark:bg-slate-900'
+                  : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <GripVertical className="w-4 h-4 text-slate-400" />
                 <span className="text-xs font-medium text-slate-700 dark:text-slate-200">
@@ -237,9 +348,27 @@ const ThumbnailSidebar: React.FC = () => {
                 loading="lazy"
               />
             </div>
+            </div>
+            {/* Drop zone: After (only shown on last element usually, or handle general between) */}
+            {thumb.pageNumber === pageCount && (
+              <div
+                className="absolute -bottom-1.5 left-0 right-0 h-3 z-10 opacity-0 hover:opacity-100 bg-blue-500/20 rounded cursor-copy transition-opacity"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); void handleDrop(thumb.pageNumber, 'after', e); }}
+              />
+            )}
           </div>
         );
       })}
+
+      {/* Global Append Drop Zone */}
+      <div
+        className="w-full h-12 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg flex items-center justify-center text-slate-400 text-xs hover:bg-slate-50 dark:hover:bg-slate-900 transition-colors"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); void handleDrop(pageCount, 'append', e); }}
+      >
+        Drag here to append to end
+      </div>
     </div>
   );
 };
