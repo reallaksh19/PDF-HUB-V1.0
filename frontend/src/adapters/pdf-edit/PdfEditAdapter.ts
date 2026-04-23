@@ -1,6 +1,7 @@
 ﻿import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import type { PDFPage } from 'pdf-lib';
 import type { PdfAnnotation } from '@/core/annotations/types';
+import { readFillColor, readStrokeColor, readStrokeWidth } from '@/core/annotations/readers';
 
 type HeaderFooterOptions = {
   pages: number[];
@@ -512,18 +513,15 @@ export class PdfEditAdapter {
         (typeof annotation.data.content === 'string' && annotation.data.content) ||
         (annotation.type === 'stamp' ? 'STAMP' : '');
 
-      const borderColor =
-        typeof annotation.data.borderColor === 'string'
-          ? hexToRgb(annotation.data.borderColor)
-          : annotation.type === 'stamp'
-          ? rgb(0.85, 0.2, 0.2)
-          : rgb(0.2, 0.4, 0.8);
-      const fillColor =
-        typeof annotation.data.backgroundColor === 'string'
-          ? hexToRgb(annotation.data.backgroundColor)
-          : annotation.type === 'stamp'
-          ? rgb(1, 0.94, 0.94)
-          : rgb(0.96, 0.97, 1);
+      const borderColorHex = readStrokeColor(annotation);
+      const fillColorHex = readFillColor(annotation);
+      const strokeWidth = readStrokeWidth(annotation);
+
+      // Fallback logic inside readers may return strings like 'transparent'. pdf-lib needs actual rgb/rgba.
+      // We will handle 'transparent' by omitting color parameters where possible,
+      // but for simplicity here we'll map transparent to undefined or white.
+      const borderColor = borderColorHex === 'transparent' ? undefined : hexToRgb(borderColorHex);
+      const fillColor = fillColorHex === 'transparent' ? undefined : hexToRgb(fillColorHex);
 
       if (annotation.type === 'highlight') {
         page.drawRectangle({
@@ -531,24 +529,35 @@ export class PdfEditAdapter {
           y,
           width: annotation.rect.width,
           height: annotation.rect.height,
-          color:
-            typeof annotation.data.backgroundColor === 'string'
-              ? hexToRgb(annotation.data.backgroundColor)
-              : rgb(1, 0.92, 0.2),
+          color: fillColor ?? rgb(1, 0.92, 0.2),
           opacity: typeof annotation.data.opacity === 'number' ? annotation.data.opacity : 0.35,
           borderWidth: 0,
         });
         continue;
       }
 
-      if (annotation.type === 'shape') {
+      if (annotation.type === 'rectangle') {
         page.drawRectangle({
           x,
           y,
           width: annotation.rect.width,
           height: annotation.rect.height,
-          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
+          borderWidth: strokeWidth,
           borderColor,
+          color: fillColor,
+        });
+        continue;
+      }
+
+      if (annotation.type === 'ellipse') {
+        page.drawEllipse({
+          x: x + annotation.rect.width / 2,
+          y: y + annotation.rect.height / 2,
+          xScale: annotation.rect.width / 2,
+          yScale: annotation.rect.height / 2,
+          borderWidth: strokeWidth,
+          borderColor,
+          color: fillColor,
         });
         continue;
       }
@@ -563,15 +572,17 @@ export class PdfEditAdapter {
         const x2 = x + points[2];
         const y2 = y + annotation.rect.height - points[3];
 
-        page.drawLine({
-          start: { x: x1, y: y1 },
-          end: { x: x2, y: y2 },
-          thickness: 2,
-          color: borderColor,
-        });
+        if (borderColor) {
+          page.drawLine({
+            start: { x: x1, y: y1 },
+            end: { x: x2, y: y2 },
+            thickness: strokeWidth,
+            color: borderColor,
+          });
 
-        if (annotation.type === 'arrow') {
-          drawArrowHead(page, x1, y1, x2, y2, borderColor, 2);
+          if (annotation.type === 'arrow') {
+            drawArrowHead(page, x1, y1, x2, y2, borderColor, strokeWidth);
+          }
         }
         continue;
       }
@@ -591,10 +602,11 @@ export class PdfEditAdapter {
           const x2 = x;
           const y2 = y + annotation.rect.height / 2;
 
+        if (borderColor) {
           page.drawLine({
             start: { x: x1, y: y1 },
             end: { x: x2, y: y2 },
-            thickness: 2,
+            thickness: strokeWidth,
             color: borderColor,
           });
         }
@@ -606,16 +618,18 @@ export class PdfEditAdapter {
           height: annotation.rect.height,
           color: fillColor,
           opacity: typeof annotation.data.opacity === 'number' ? annotation.data.opacity : 0.8,
-          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
+          borderWidth: strokeWidth,
           borderColor,
         });
 
-        page.drawLine({
-          start: { x, y: y + annotation.rect.height / 2 },
-          end: { x: x + 18, y: y + annotation.rect.height / 2 },
-          thickness: 2,
-          color: borderColor,
-        });
+        if (borderColor) {
+          page.drawLine({
+            start: { x, y: y + annotation.rect.height / 2 },
+            end: { x: x + 18, y: y + annotation.rect.height / 2 },
+            thickness: strokeWidth,
+            color: borderColor,
+          });
+        }
 
         if (text) {
           page.drawText(text, {
@@ -645,7 +659,7 @@ export class PdfEditAdapter {
           height: annotation.rect.height,
           color: fillColor,
           opacity: typeof annotation.data.opacity === 'number' ? annotation.data.opacity : 0.75,
-          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
+          borderWidth: strokeWidth,
           borderColor,
         });
 
@@ -673,3 +687,4 @@ export class PdfEditAdapter {
   }
 }
 
+}

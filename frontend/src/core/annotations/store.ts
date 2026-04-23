@@ -19,6 +19,7 @@ interface AnnotationState {
   activeAnnotationId: string | null;
   selectedAnnotationIds: string[];
   clipboard: PdfAnnotation[];
+  styleClipboard: Record<string, unknown> | null;
 }
 
 interface AnnotationActions {
@@ -39,6 +40,10 @@ interface AnnotationActions {
   duplicateSelection: () => void;
   alignSelection: (mode: AlignMode) => void;
   distributeSelection: (mode: DistributeMode) => void;
+  bringToFront: () => void;
+  sendToBack: () => void;
+  copyStyle: () => void;
+  pasteStyle: () => void;
 }
 
 const MAX_HISTORY = 50;
@@ -84,6 +89,7 @@ export const useAnnotationStore = create<AnnotationState & AnnotationActions>((s
   activeAnnotationId: null,
   selectedAnnotationIds: [],
   clipboard: [],
+  styleClipboard: null,
 
   addAnnotation: (annotation) =>
     set((state) =>
@@ -232,6 +238,45 @@ export const useAnnotationStore = create<AnnotationState & AnnotationActions>((s
       }));
 
       return { clipboard: copied };
+    }),
+
+  copyStyle: () =>
+    set((state) => {
+      const sourceId = state.selectedAnnotationIds[0] || state.activeAnnotationId;
+      if (!sourceId) return state;
+
+      const source = state.annotations.find(a => a.id === sourceId);
+      if (!source) return state;
+
+      // Extract styles omitting text and position/anchor specifics
+      const { text, anchor, points, autoSize, locked, zIndex, rotation, title, content, ...styles } = source.data as any;
+      return { styleClipboard: styles };
+    }),
+
+  pasteStyle: () =>
+    set((state) => {
+      if (!state.styleClipboard) return state;
+      const ids = new Set(
+        state.selectedAnnotationIds.length > 0
+          ? state.selectedAnnotationIds
+          : state.activeAnnotationId
+          ? [state.activeAnnotationId]
+          : []
+      );
+      if (ids.size === 0) return state;
+
+      const nextAnnotations = state.annotations.map(annotation => {
+        if (!ids.has(annotation.id)) return annotation;
+        return {
+          ...annotation,
+          data: {
+            ...annotation.data,
+            ...state.styleClipboard
+          }
+        };
+      });
+
+      return snapshot(state, nextAnnotations);
     }),
 
   pasteClipboard: (targetPage) =>

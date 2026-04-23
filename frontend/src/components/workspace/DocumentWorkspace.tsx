@@ -1,5 +1,5 @@
 import React from 'react';
-import { UploadCloud, Lock } from 'lucide-react';
+import { UploadCloud, Lock, AlertCircle } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
@@ -7,6 +7,7 @@ import { PdfRendererAdapter, type TextLayerItem } from '@/adapters/pdf-renderer/
 import { loadAnnotations, saveAnnotations } from '@/core/annotations/persistence';
 import { useAnnotationStore } from '@/core/annotations/store';
 import type { PdfAnnotation, Rect, AnnotationType, Point2D } from '@/core/annotations/types';
+import { readFillColor, readStrokeColor, readStrokeWidth } from '@/core/annotations/readers';
 import { useEditorStore } from '@/core/editor/store';
 import { useSessionStore } from '@/core/session/store';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
@@ -1085,6 +1086,20 @@ const BoxNode: React.FC<{
           }}
         />
       )}
+
+      {/* Status Indicators */}
+      <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+        {annotation.data.locked && (
+          <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+            <Lock className="w-3 h-3" />
+          </div>
+        )}
+        {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+          <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+            <AlertCircle className="w-3 h-3" />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1227,6 +1242,20 @@ const CalloutNode: React.FC<{
             }}
           />
         )}
+
+        {/* Status Indicators */}
+        <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+          {annotation.data.locked && (
+            <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+              <Lock className="w-3 h-3" />
+            </div>
+          )}
+          {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+            <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+              <AlertCircle className="w-3 h-3" />
+            </div>
+          )}
+        </div>
       </div>
     </>
   );
@@ -1293,6 +1322,20 @@ const LineLikeNode: React.FC<{
           }}
         />
       )}
+
+      {/* Status Indicators */}
+      <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+        {annotation.data.locked && (
+          <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+            <Lock className="w-3 h-3" />
+          </div>
+        )}
+        {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+          <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+            <AlertCircle className="w-3 h-3" />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1559,27 +1602,9 @@ function annotationVisualStyle(
   annotation: PdfAnnotation,
   selected: boolean,
 ): React.CSSProperties {
-  const backgroundColor =
-    typeof annotation.data.backgroundColor === 'string'
-      ? annotation.data.backgroundColor
-      : annotation.type === 'highlight'
-      ? '#fde047'
-      : annotation.type === 'comment'
-      ? '#fff7cc'
-      : annotation.type === 'stamp'
-      ? '#fef2f2'
-      : 'transparent';
-
-  const borderColor =
-    typeof annotation.data.borderColor === 'string'
-      ? annotation.data.borderColor
-      : typeof annotation.data.strokeColor === 'string'
-      ? annotation.data.strokeColor
-      : (annotation.type === 'rectangle' || annotation.type === 'ellipse')
-      ? '#3b82f6'
-      : annotation.type === 'stamp'
-      ? '#ef4444'
-      : '#60a5fa';
+  const backgroundColor = readFillColor(annotation);
+  const borderColor = readStrokeColor(annotation);
+  const borderWidth = readStrokeWidth(annotation);
 
   const textColor =
     typeof annotation.data.textColor === 'string'
@@ -1587,15 +1612,6 @@ function annotationVisualStyle(
       : annotation.type === 'stamp'
       ? '#b91c1c'
       : '#0f172a';
-
-  const borderWidth =
-    typeof annotation.data.borderWidth === 'number'
-      ? annotation.data.borderWidth
-      : typeof annotation.data.strokeWidth === 'number'
-      ? annotation.data.strokeWidth
-      : (annotation.type === 'rectangle' || annotation.type === 'ellipse')
-      ? 2
-      : 1;
 
   const opacity =
       typeof annotation.data.opacity === 'number'

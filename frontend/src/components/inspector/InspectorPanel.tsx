@@ -3,7 +3,7 @@ import { useEditorStore } from '@/core/editor/store';
 import { useAnnotationStore } from '@/core/annotations/store';
 import type { AnnotationType, PdfAnnotation } from '@/core/annotations/types';
 import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
-import { Settings, Palette, Info, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Settings, Palette, Info, ChevronRight, ChevronLeft, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 
 const ANNOTATION_TYPES: AnnotationType[] = [
@@ -28,6 +28,11 @@ export const InspectorPanel: React.FC = () => {
     updateAnnotation,
     updateManyAnnotations,
     deleteSelection,
+    bringToFront,
+    sendToBack,
+    copyStyle,
+    pasteStyle,
+    styleClipboard
   } = useAnnotationStore();
 
   const [previousWidth, setPreviousWidth] = useState(18);
@@ -67,8 +72,9 @@ export const InspectorPanel: React.FC = () => {
   }
 
   const tabs = [
-    { id: 'properties', icon: Settings, label: 'Properties' },
+    { id: 'properties', icon: Settings, label: 'Geometry' },
     { id: 'style', icon: Palette, label: 'Style' },
+    { id: 'review', icon: MessageCircle, label: 'Review' },
     { id: 'metadata', icon: Info, label: 'Metadata' },
   ] as const;
 
@@ -130,11 +136,24 @@ export const InspectorPanel: React.FC = () => {
             annotation={activeAnnotation}
             updateAnnotation={updateAnnotation}
             deleteSelection={deleteSelection}
+            bringToFront={bringToFront}
+            sendToBack={sendToBack}
           />
         )}
 
         {activeAnnotation && inspectorTab === 'style' && (
           <StyleTab
+            annotation={activeAnnotation}
+            updateManyAnnotations={updateManyAnnotations}
+            selection={selection}
+            copyStyle={copyStyle}
+            pasteStyle={pasteStyle}
+            canPasteStyle={styleClipboard !== null}
+          />
+        )}
+
+        {activeAnnotation && inspectorTab === 'review' && (
+          <ReviewTab
             annotation={activeAnnotation}
             updateManyAnnotations={updateManyAnnotations}
             selection={selection}
@@ -149,11 +168,107 @@ export const InspectorPanel: React.FC = () => {
   );
 };
 
+const ReviewTab: React.FC<{
+  annotation: PdfAnnotation;
+  selection: PdfAnnotation[];
+  updateManyAnnotations: (
+    updates: Array<{ id: string; data: Partial<PdfAnnotation> }>,
+  ) => void;
+  copyStyle: () => void;
+  pasteStyle: () => void;
+  canPasteStyle: boolean;
+}> = ({ annotation, selection, updateManyAnnotations, copyStyle, pasteStyle, canPasteStyle }) => {
+  const applyToSelection = (dataPatch: Record<string, unknown>) => {
+    const targets = selection.length > 1 ? selection : [annotation];
+    updateManyAnnotations(
+      targets.map((item) => ({
+        id: item.id,
+        data: {
+          data: {
+            ...item.data,
+            ...dataPatch,
+          },
+        },
+      })),
+    );
+  };
+
+  // Mixed state accessors
+  const getMixedColor = (key: 'backgroundColor' | 'borderColor' | 'textColor' | 'fillColor' | 'strokeColor', fallback: string) => {
+    const first = typeof annotation.data[key] === 'string' ? annotation.data[key] : fallback;
+    const isMixed = selection.some((item) => {
+      const val = typeof item.data[key] === 'string' ? item.data[key] : fallback;
+      return val !== first;
+    });
+    return isMixed ? '' : (first as string); // Return empty string to indicate mixed state in standard color inputs
+  };
+
+  const getMixedNumber = (key: 'borderWidth' | 'strokeWidth' | 'fontSize', fallback: number) => {
+    const first = typeof annotation.data[key] === 'number' ? annotation.data[key] : fallback;
+    const isMixed = selection.some((item) => {
+      const val = typeof item.data[key] === 'number' ? item.data[key] : fallback;
+      return val !== first;
+    });
+    return isMixed ? '' : first; // Return empty string to indicate mixed state in number inputs
+  };
+
+  const getMixedString = (key: 'fontWeight' | 'textAlign', fallback: string) => {
+    const first = typeof annotation.data[key] === 'string' ? annotation.data[key] : fallback;
+    const isMixed = selection.some((item) => {
+      const val = typeof item.data[key] === 'string' ? item.data[key] : fallback;
+      return val !== first;
+    });
+    return isMixed ? 'mixed' : (first as string);
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      <SectionTitle title="Review" />
+
+      <LabeledSelect
+        label="Status"
+        value={typeof annotation.data.status === 'string' ? annotation.data.status : 'open'}
+        onChange={(value) => applyToSelection({ status: value })}
+        options={[
+          { label: 'Open', value: 'open' },
+          { label: 'Approved', value: 'approved' },
+          { label: 'Resolved', value: 'resolved' },
+          { label: 'Rejected', value: 'rejected' },
+        ]}
+      />
+
+      <label className="text-xs text-slate-500 block">
+        Assignee
+        <input
+          type="text"
+          value={typeof annotation.data.assignee === 'string' ? annotation.data.assignee : ''}
+          onChange={(event) => applyToSelection({ assignee: event.target.value })}
+          className="mt-1 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5 text-sm"
+        />
+      </label>
+
+      {/* Due date timestamp stub - real implementation would use a datepicker component */}
+      <LabeledNumberInput
+        label="Due Date (Timestamp)"
+        value={typeof annotation.data.dueDate === 'number' ? annotation.data.dueDate : 0}
+        onChange={(value) => {
+          const next = Number(value);
+          if (!Number.isNaN(next)) {
+             applyToSelection({ dueDate: next });
+          }
+        }}
+      />
+    </div>
+  );
+};
+
 const PropertiesTab: React.FC<{
   annotation: PdfAnnotation;
   updateAnnotation: (id: string, data: Partial<PdfAnnotation>) => void;
   deleteSelection: () => void;
-}> = ({ annotation, updateAnnotation, deleteSelection }) => {
+  bringToFront: () => void;
+  sendToBack: () => void;
+}> = ({ annotation, updateAnnotation, deleteSelection, bringToFront, sendToBack }) => {
   const updateRect = (key: 'x' | 'y' | 'width' | 'height', value: string) => {
     const next = Number(value);
     if (Number.isNaN(next)) {
@@ -176,12 +291,22 @@ const PropertiesTab: React.FC<{
         </Button>
       </div>
 
-      <LabeledSelect
-        label="Type"
-        value={annotation.type}
-        onChange={(value) => updateAnnotation(annotation.id, { type: value as AnnotationType })}
-        options={ANNOTATION_TYPES.map((type) => ({ label: type, value: type }))}
-      />
+      <div className="flex gap-2 items-end justify-between">
+        <div className="space-y-1">
+          <label className="text-xs font-semibold text-slate-500 uppercase">Type (Read-Only)</label>
+          <div className="text-sm font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 inline-block">
+            {annotation.type}
+          </div>
+        </div>
+        <div className="flex gap-1 border border-slate-200 dark:border-slate-700 p-0.5 rounded bg-slate-50 dark:bg-slate-900">
+           <Button variant="ghost" size="sm" onClick={sendToBack} className="text-xs px-2 h-7" title="Send to back">
+              Back
+           </Button>
+           <Button variant="ghost" size="sm" onClick={bringToFront} className="text-xs px-2 h-7" title="Bring to front">
+              Front
+           </Button>
+        </div>
+      </div>
 
       <TwoColumnRow>
         <LabeledNumberInput label="X" value={annotation.rect.x} onChange={(v) => updateRect('x', v)} />
@@ -251,12 +376,12 @@ const StyleTab: React.FC<{
       <TwoColumnRow>
         <LabeledColorInput
           label="Background"
-          value={readColor(annotation.data.backgroundColor, '#ffffff')}
+          value={getMixedColor('backgroundColor', '#ffffff')}
           onChange={(value) => applyToSelection({ backgroundColor: value })}
         />
         <LabeledColorInput
           label="Border"
-          value={readColor(annotation.data.borderColor, '#60a5fa')}
+          value={getMixedColor('borderColor', '#60a5fa')}
           onChange={(value) => applyToSelection({ borderColor: value })}
         />
       </TwoColumnRow>
@@ -264,12 +389,12 @@ const StyleTab: React.FC<{
       <TwoColumnRow>
         <LabeledColorInput
           label="Text"
-          value={readColor(annotation.data.textColor, '#0f172a')}
+          value={getMixedColor('textColor', '#0f172a')}
           onChange={(value) => applyToSelection({ textColor: value })}
         />
         <LabeledNumberInput
           label="Border Width"
-          value={typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1}
+          value={getMixedNumber('borderWidth', 1)}
           onChange={(value) => {
             const next = Number(value);
             if (Number.isNaN(next)) {
@@ -285,7 +410,7 @@ const StyleTab: React.FC<{
           <TwoColumnRow>
             <LabeledNumberInput
               label="Font Size"
-              value={typeof annotation.data.fontSize === 'number' ? annotation.data.fontSize : 12}
+              value={getMixedNumber('fontSize', 12)}
               onChange={(value) => {
                 const next = Number(value);
                 if (Number.isNaN(next)) {
@@ -297,24 +422,26 @@ const StyleTab: React.FC<{
 
             <LabeledSelect
               label="Weight"
-              value={typeof annotation.data.fontWeight === 'string' ? annotation.data.fontWeight : 'normal'}
+              value={getMixedString('fontWeight', 'normal')}
               onChange={(value) => applyToSelection({ fontWeight: value })}
               options={[
                 { label: 'normal', value: 'normal' },
                 { label: 'bold', value: 'bold' },
-              ]}
+                { label: 'Mixed', value: 'mixed' }, // Option only selectable if mixed
+              ].filter(opt => opt.value !== 'mixed' || getMixedString('fontWeight', 'normal') === 'mixed')}
             />
           </TwoColumnRow>
 
           <LabeledSelect
             label="Text Align"
-            value={typeof annotation.data.textAlign === 'string' ? annotation.data.textAlign : 'left'}
+            value={getMixedString('textAlign', 'left')}
             onChange={(value) => applyToSelection({ textAlign: value })}
             options={[
               { label: 'left', value: 'left' },
               { label: 'center', value: 'center' },
               { label: 'right', value: 'right' },
-            ]}
+              { label: 'Mixed', value: 'mixed' },
+            ].filter(opt => opt.value !== 'mixed' || getMixedString('textAlign', 'left') === 'mixed')}
           />
 
           <label className="flex items-center gap-2 text-sm">

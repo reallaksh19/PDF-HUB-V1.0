@@ -21,7 +21,7 @@ export type SidebarTab =
   | 'search'
   | 'macros';
 
-export type InspectorTab = 'properties' | 'style' | 'metadata';
+export type InspectorTab = 'properties' | 'style' | 'review' | 'metadata';
 export type RibbonTab = 'file' | 'organize' | 'annotate' | 'macro' | 'view';
 
 export interface EditorState {
