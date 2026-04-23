@@ -1,19 +1,20 @@
-﻿# Global release gate
+﻿# Global pass gate for the entire program
 
-The release is blocked unless all are true:
+This release is blocked unless all are true:
 
 * typecheck passes
 * lint passes
-* full test suite passes
+* full tests pass
 * clean install passes
 * no `window.prompt(`
 * no `SearchPanelStub`
-* `viewMode` and `fitMode` affect workspace rendering
-* document mutation undo/redo works
+* `viewMode` and `fitMode` visibly affect rendering
+* text selection → highlight/underline/note/callout works
 * thumbnail right-click menu works
-* text selection to highlight/underline/note/callout works
+* document mutation undo/redo works
+* save/export/session semantics are explicit and correct
 * macro dry-run works
-* batch continue-on-error works
-* save/export/session semantics are clear in UI and code
+* macro batch continue-on-error works
+* review sidebar filters and jump-to-annotation work
 * Chrome smoke green
 * Edge smoke green

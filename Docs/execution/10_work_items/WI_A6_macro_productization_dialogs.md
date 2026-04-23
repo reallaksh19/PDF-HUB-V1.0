@@ -1,61 +1,103 @@
-﻿# AGENT A6 PROMPT — Macro Productization + Organize/Batch Dialogs
+﻿# WI — A6 Macro Center + Organize Dialogs + Batch Ops
 
-## Mission
+## Role
 
-You are **A6**. Turn macros from technically capable into operator-friendly. Replace prompt-driven organize and batch flows with typed dialogs and validation-driven macro UX.
+You are **A6**. You own macro productization and the replacement of all prompt-driven organize flows with typed, validated, product-grade dialogs.
 
-## Owned scope
+## Owned write scope
 
-* `frontend/src/components/sidebar/MacrosSidebar.tsx`
-* `frontend/src/components/toolbar/ToolbarOrganize.tsx`
-* `frontend/src/components/toolbar/ToolbarMacro.tsx`
-* `frontend/src/core/macro/**`
-* reusable dialogs/forms for organize + macro flows
+* macro sidebar
+* organize toolbar dialogs
+* macro variable inputs
+* donor-file management UX
+* batch-run UX
+* macro logs and reports
+* organize modal forms
 
 ## Forbidden scope
 
+* command dispatcher internals
+* search result extraction
 * view rendering engine
-* search hit extraction
-* thumbnail drag logic
-* review thread model
+* review sidebar thread model
+
+## Product leap target
+
+Turn macros from “power feature with rough edges” into a **Macro Center**.
 
 ## Must implement
 
-1. Replace all prompt-driven organize flows with product dialogs:
+### 1. Replace all prompt-driven flows
 
-   * insert blank page
-   * replace page
-   * donor page selection
-   * batch text
-   * batch run recipe selection
-2. Macro Center features:
+Dialog-driven replacements for:
 
-   * built-in recipes
-   * saved presets lifecycle
-   * preset duplicate/delete/rename
-   * variable inputs
-   * per-step parameter editing
-   * donor-file binding UX
-   * run log
-   * output queue
-3. Dry run:
+* insert blank page
+* replace page
+* donor page selection
+* batch text
+* batch recipe selection
+* header/footer configuration
+* page-numbering options
 
-   * validation-only
-   * no document mutation
-   * clear preflight report
-4. Batch run hardening:
+### 2. Macro Center
 
-   * continue on error
-   * per-file success/failure summary
-   * downloadable report JSON
-   * reproducibility metadata
+Support:
+
+* built-in recipes
+* preset save/rename/duplicate/delete
+* variable inputs
+* per-step parameter forms
+* donor-file binding
+* dry run
+* run log
+* output queue
+* job summary
+
+### 3. Dry run
+
+Must be real:
+
+* validation only
+* no document mutation
+* no output write
+* explicit preflight report
+
+### 4. Batch runner hardening
+
+* continue on error
+* per-file result cards
+* downloadable JSON summary
+* reproducibility info:
+
+  * recipe id
+  * recipe snapshot
+  * params
+  * timestamp
+  * input file name/hash
+  * failure reason if any
+
+### 5. Usability depth
+
+* recipes grouped by category
+* parameter presets
+* inline validation
+* actionable output queue: Save / Save All / Clear / Retry Failed
+
+## “Next-level” additions
+
+* macro recorder for supported command flows
+* favorite recipes
+* last-used values memory
+* reusable variable templates
+* “apply recipe to current selection/current page/all pages” quick-scope chooser
+* job history panel
 
 ## Required UX rules
 
-* no auto-save surprise for generated outputs
-* clear validation errors before run
-* donor-dependent steps blocked until donor mapping complete
-* logs grouped and readable
+* no blocking browser dialogs
+* no hidden auto-save
+* donor-dependent steps blocked until valid
+* logs readable by normal users, not only developers
 
 ## Strict pass tests
 
@@ -65,21 +107,29 @@ Automated:
 * `corepack pnpm --filter frontend lint`
 * `corepack pnpm --filter frontend test -- macro toolbar-organize`
 
-Required test cases:
+Required tests:
 
-* dryRun does not mutate document
-* donor validation blocks invalid run
-* batch continue-on-error works
-* saved preset lifecycle works
-* output queue state is correct
+* dry-run does not mutate document
+* invalid donor mapping blocks run
+* preset lifecycle works
+* continue-on-error batch works
+* output queue state correct
+* dialog validation blocks bad submits
 
 Manual validations:
 
-* run built-in header/footer macro
-* run batch text macro on selected pages
+* run page-number recipe
+* run header/footer on selected pages
+* run batch text recipe
 * run same recipe on multiple files
-* batch failure on one file does not abort the whole set
+* one-file failure does not abort entire batch
 
 Evidence:
 
 * `Docs/execution/30_evidence/A6/RESULT.md`
+
+Rollback criteria:
+
+* prompts remain in organize flows
+* dry-run is fake
+* donor-file features still inaccessible from UI
