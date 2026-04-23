@@ -10,6 +10,7 @@ import type { PdfAnnotation, Rect, AnnotationType, Point2D } from '@/core/annota
 import { readFillColor, readStrokeColor, readStrokeWidth } from '@/core/annotations/readers';
 import { useEditorStore } from '@/core/editor/store';
 import { useSessionStore } from '@/core/session/store';
+import { useSearchStore } from '@/core/search/store';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 
@@ -823,6 +824,8 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
           </span>
         ))}
       </div>
+
+      <SearchOverlay pageNumber={pageNumber} scale={scale} />
 
       {textSelectionDraft && (
         <>
@@ -1653,6 +1656,34 @@ function autoSizeRectForText(text: string, fontSize: number, rect: Rect): Rect {
   const height = Math.max(36, lines.length * (fontSize * 1.5) + 14);
   return { ...rect, width, height };
 }
+
+const SearchOverlay: React.FC<{ pageNumber: number, scale: number }> = ({ pageNumber, scale }) => {
+  const { hits, activeHitIndex } = useSearchStore();
+
+  const pageHits = hits.filter(h => h.pageNumber === pageNumber);
+  if (pageHits.length === 0) return null;
+
+  return (
+    <div className="absolute inset-0 pointer-events-none z-20">
+      {pageHits.map((hit, idx) => {
+        // We find if this hit is globally the active one
+        const isActive = hits.indexOf(hit) === activeHitIndex;
+        return (
+          <div
+            key={idx}
+            className={`absolute rounded transition-all ${isActive ? 'bg-orange-400/50 ring-2 ring-orange-500' : 'bg-yellow-400/30'}`}
+            style={{
+              left: hit.rect.x * scale,
+              top: hit.rect.y * scale,
+              width: hit.rect.width * scale,
+              height: hit.rect.height * scale,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
 
 function computeCalloutLeader(anchor: Point2D, rect: Rect) {
   const left = rect.x;

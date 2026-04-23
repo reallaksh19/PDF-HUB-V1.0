@@ -10,6 +10,9 @@ import { PdfRendererAdapter } from '@/adapters/pdf-renderer/PdfRendererAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 import { FeaturePlaceholder } from '@/components/ui/FeaturePlaceholder';
 import { MacrosSidebar } from '@/components/sidebar/MacrosSidebar';
+import { useSearchStore } from '@/core/search/store';
+import { SearchIndexer } from '@/core/search/indexer';
+import { createOverlayReplaceAnnotation } from '@/core/search/overlayReplace';
 import {
   Layers,
   Bookmark,
@@ -575,11 +578,136 @@ const CommentsSidebar: React.FC = () => {
 };
 
 const SearchPanelStub: React.FC = () => {
+  const { workingBytes, documentKey, setPage } = useSessionStore();
+  const { hits, activeHitIndex, setHits, nextHit, prevHit } = useSearchStore();
+
+  const [query, setQuery] = React.useState('');
+  const [replaceText, setReplaceText] = React.useState('');
+  const [caseSensitive, setCaseSensitive] = React.useState(false);
+  const [wholeWord, setWholeWord] = React.useState(false);
+  const [useRegex, setUseRegex] = React.useState(false);
+
+  const handleSearch = () => {
+    if (!documentKey) return;
+    const pagesText = SearchIndexer.getCache(documentKey);
+    if (!pagesText) {
+      console.warn("Index not built yet.");
+      return;
+    }
+
+    const newHits = SearchIndexer.search(pagesText, query, {
+      caseSensitive,
+      wholeWord,
+      useRegex
+    });
+
+    setHits(newHits);
+    if (newHits.length > 0) {
+      setPage(newHits[0].pageNumber);
+    }
+  };
+
+  const handleNext = () => {
+    nextHit();
+    const nextIndex = (activeHitIndex + 1) % hits.length;
+    if (hits[nextIndex]) setPage(hits[nextIndex].pageNumber);
+  };
+
+  const handlePrev = () => {
+    prevHit();
+    const prevIndex = (activeHitIndex - 1 + hits.length) % hits.length;
+    if (hits[prevIndex]) setPage(hits[prevIndex].pageNumber);
+  };
+
+  const handleReplaceCurrent = () => {
+    const activeHit = hits[activeHitIndex];
+    if (!activeHit) return;
+
+    // Create opaque annotation
+    createOverlayReplaceAnnotation(activeHit, replaceText);
+
+    // After replacing, usually we move to the next hit
+    handleNext();
+  };
+
+  const handleReplaceAll = () => {
+    if (hits.length === 0) return;
+    hits.forEach((hit) => {
+       createOverlayReplaceAnnotation(hit, replaceText);
+    });
+    // Normally clear hits or update index after a bulk op
+  };
+
+  if (!workingBytes) {
+    return (
+      <FeaturePlaceholder
+        name="Search"
+        description="Open a PDF to search for text."
+        icon={<Search />}
+      />
+    );
+  }
+
   return (
-    <FeaturePlaceholder
-      name="Search"
-      description="Use the search-enabled patch from the previous bundle or wire your search panel here."
-      icon={<Search />}
-    />
+    <div className="p-3 space-y-4">
+       <div className="space-y-3">
+         <label className="text-xs text-slate-500 block">
+            Search Term
+            <input
+              type="text"
+              className="mt-1 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+              placeholder="Search document..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+         </label>
+
+         <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+          <label className="inline-flex items-center gap-1">
+            <input type="checkbox" checked={caseSensitive} onChange={(e) => setCaseSensitive(e.target.checked)} />
+            Match Case
+          </label>
+          <label className="inline-flex items-center gap-1">
+            <input type="checkbox" checked={wholeWord} onChange={(e) => setWholeWord(e.target.checked)} />
+            Whole Word
+          </label>
+          <label className="inline-flex items-center gap-1">
+            <input type="checkbox" checked={useRegex} onChange={(e) => setUseRegex(e.target.checked)} />
+            RegEx
+          </label>
+         </div>
+
+         <Button className="w-full justify-center" onClick={handleSearch} disabled={!query}>Search</Button>
+
+         {hits.length > 0 && (
+           <>
+             <div className="text-xs text-center text-slate-500">
+               Showing {activeHitIndex + 1} of {hits.length} matches
+             </div>
+             <div className="flex gap-2">
+               <Button className="w-full justify-center" onClick={handlePrev}>Previous</Button>
+               <Button className="w-full justify-center" onClick={handleNext}>Next</Button>
+             </div>
+
+             <div className="pt-2 space-y-2 border-t border-slate-200 dark:border-slate-800">
+               <label className="text-xs text-slate-500 block">
+                  Replace With
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+                    placeholder="New text..."
+                    value={replaceText}
+                    onChange={(e) => setReplaceText(e.target.value)}
+                  />
+               </label>
+               <div className="flex gap-2">
+                 <Button variant="secondary" className="w-full justify-center" onClick={handleReplaceCurrent}>Replace</Button>
+                 <Button variant="secondary" className="w-full justify-center" onClick={handleReplaceAll}>Replace All</Button>
+               </div>
+             </div>
+           </>
+         )}
+       </div>
+    </div>
   );
 };
