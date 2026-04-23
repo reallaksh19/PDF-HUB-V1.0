@@ -11,52 +11,18 @@ interface ModalProps {
 export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  const modalRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-        return;
-      }
-
-      // Focus trap
-      if (e.key === 'Tab') {
-        if (!modalRef.current) return;
-        const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), textarea:not([disabled]), input[type="text"]:not([disabled]), input[type="radio"]:not([disabled]), input[type="checkbox"]:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        );
-        const firstElement = focusableElements[0];
-        const lastElement = focusableElements[focusableElements.length - 1];
-
-        if (e.shiftKey) { // Shift + Tab
-          if (document.activeElement === firstElement) {
-            lastElement?.focus();
-            e.preventDefault();
-          }
-        } else { // Tab
-          if (document.activeElement === lastElement) {
-            firstElement?.focus();
-            e.preventDefault();
-          }
-        }
-      }
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
     };
 
     if (isOpen) {
-      document.addEventListener('keydown', handleKeyDown);
+      document.addEventListener('keydown', handleEscape);
       document.body.style.overflow = 'hidden';
-      // Auto focus the first element if any
-      setTimeout(() => {
-        if (modalRef.current) {
-          const focusable = modalRef.current.querySelector<HTMLElement>('button:not([disabled]), [tabindex]:not([tabindex="-1"])');
-          if (focusable) focusable.focus();
-        }
-      }, 50);
     }
 
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keydown', handleEscape);
       document.body.style.overflow = 'unset';
     };
   }, [isOpen, onClose]);
@@ -64,23 +30,15 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
   if (!isOpen) return null;
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="modal-title"
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div 
         ref={overlayRef}
         className="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity"
         onClick={(e) => e.target === overlayRef.current && onClose()}
       />
-      <div
-        ref={modalRef}
-        className="relative z-50 w-full max-w-md scale-100 transform overflow-hidden rounded-lg bg-white dark:bg-slate-900 p-6 text-left shadow-xl transition-all"
-      >
+      <div className="relative z-50 w-full max-w-md scale-100 transform overflow-hidden rounded-lg bg-white dark:bg-slate-900 p-6 text-left shadow-xl transition-all">
         <div className="flex items-center justify-between mb-4">
-          <h3 id="modal-title" className="text-lg font-semibold leading-6 text-slate-900 dark:text-slate-100">
+          <h3 className="text-lg font-semibold leading-6 text-slate-900 dark:text-slate-100">
             {title}
           </h3>
           <button

@@ -114,6 +114,66 @@ export async function executeMacroRecipe(
         break;
       }
 
+      case 'insert_image': {
+        const donor = ctx.donorFiles[step.donorFileId];
+        if (!donor) {
+          logs.push(`Skipped insert_image: missing donor file ${step.donorFileId}`);
+          break;
+        }
+
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped insert_image: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.insertImage(workingBytes, donor, {
+          pages: pages.map((p) => p - 1),
+          x: step.x,
+          y: step.y,
+          width: step.width,
+          height: step.height,
+        });
+        logs.push(`Inserted image ${step.donorFileId} on pages: ${pages.join(', ')}`);
+        break;
+      }
+
+      case 'inject_rich_text': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped inject_rich_text: no pages selected');
+          break;
+        }
+
+        // For now, rich text maps to basic text drawing. In a full implementation,
+        // HTML to PDF layout parsing would be done here using a library like html2canvas or pdfmake
+        // or by utilizing a specialized PdfEditAdapter method.
+        workingBytes = await PdfEditAdapter.drawTextOnPages(workingBytes, {
+          pages: pages.map((p) => p - 1),
+          text: step.html,
+          x: step.x,
+          y: step.y,
+          fontSize: 12,
+          color: '#000000',
+          align: 'left',
+          now: ctx.now,
+          fileName: ctx.fileName,
+          enablePageNumberToken: true,
+          enableFileNameToken: true,
+          enableDateToken: true,
+        });
+        logs.push(`Injected rich text on pages: ${pages.join(', ')}`);
+        break;
+      }
+
       case 'duplicate_pages': {
         const pages = resolvePageSelector(step.selector, pageCount, {
           currentPage: ctx.currentPage,
@@ -263,6 +323,37 @@ export async function executeMacroRecipe(
         break;
       }
 
+      case 'draw_text_on_pages': {
+        const pages = resolvePageSelector(step.selector, pageCount, {
+          currentPage: ctx.currentPage,
+          selectedPages,
+        });
+
+        if (pages.length === 0) {
+          logs.push('Skipped draw_text_on_pages: no pages selected');
+          break;
+        }
+
+        workingBytes = await PdfEditAdapter.drawTextOnPages(workingBytes, {
+          pages: pages.map((p) => p - 1),
+          text: step.text,
+          x: step.x,
+          y: step.y,
+          fontSize: step.fontSize,
+          color: step.color ?? '#111827',
+          opacity: step.opacity ?? 0.95,
+          align: step.align ?? 'left',
+          fileName: ctx.fileName,
+          now: ctx.now,
+          enablePageNumberToken: step.pageNumberToken ?? true,
+          enableFileNameToken: step.fileNameToken ?? false,
+          enableDateToken: step.dateToken ?? false,
+        });
+
+        logs.push(`Drew text on pages: ${pages.join(', ')}`);
+        break;
+      }
+
       default:
         assertNever(step);
     }
@@ -274,6 +365,7 @@ export async function executeMacroRecipe(
     selectedPages,
     logs,
     extractedOutputs,
+    outputs: extractedOutputs,
   };
 }
 

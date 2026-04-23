@@ -2,13 +2,28 @@
   | 'textbox'
   | 'highlight'
   | 'underline'
+  | 'strikeout'
   | 'shape'
   | 'freehand'
   | 'stamp'
+  | 'sticky-note'
   | 'comment'
   | 'line'
   | 'arrow'
   | 'callout';
+
+export type ReviewStatus = 'open' | 'resolved' | 'rejected';
+
+export interface AnnotationStyle {
+  stroke?: string;
+  fill?: string;
+  textColor?: string;
+  strokeWidth?: number;
+  opacity?: number;
+  fontSize?: number;
+  fontWeight?: 'normal' | 'bold';
+  textAlign?: 'left' | 'center' | 'right';
+}
 
 export interface Rect {
   x: number;
@@ -44,6 +59,12 @@ export interface AnnotationData extends Record<string, unknown> {
 
   anchor?: Point2D;
   points?: number[];
+
+  calloutAnchor?: Point2D;
+  stampPreset?: 'APPROVED' | 'REJECTED' | 'DRAFT';
+
+  reviewStatus?: ReviewStatus;
+  style?: AnnotationStyle;
 }
 
 export interface PdfAnnotation {

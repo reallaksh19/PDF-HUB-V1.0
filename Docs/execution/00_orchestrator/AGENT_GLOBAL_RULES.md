@@ -1,38 +1,40 @@
-﻿# Global rules for all agents
+﻿# Global doctrine for all agents
 
-Every agent must follow these rules.
+Every WI below assumes these rules are binding.
 
-* Work only inside the owned scope.
-* Do not create alternate execution paths for page/document actions. All page/document actions must go through the shared command layer.
-* Do not call direct document mutation from UI components once the command layer lands.
-* Do not introduce new `window.prompt`, `window.confirm`, or placeholder/stub UI in shipped flows.
-* Do not leave dead state in store-only controls. Every visible control must affect runtime behavior.
-* Do not bypass document-mutation history for page-level changes.
-* Do not silently swallow errors. Every failure must surface through typed results and user feedback.
-* Every agent must update `Docs/execution/30_evidence/Ax/RESULT.md`.
-* Every agent must add or update tests for their owned scope.
-* Every agent must list touched files, decisions, risks, and validation evidence.
+## Product doctrine
 
-Common automated gate for each agent:
+* Do not add “feature-shaped UI” without runtime behavior.
+* Do not add alternate execution paths for the same document action.
+* Do not patch symptoms where a contract is missing. Add the contract first.
+* Do not ship hidden destructive actions.
+* Do not leave silent failure paths.
+* Do not leave debug-only or placeholder UX in shipped flows.
 
-* `corepack pnpm --filter frontend exec tsc --noEmit`
-* `corepack pnpm --filter frontend lint`
-* `corepack pnpm --filter frontend test -- <owned-scope>`
+## Engineering doctrine
 
-Common proof required from each agent:
+* Typed contracts first.
+* One command bus for page/document actions.
+* One document-mutation history model.
+* One save/export/session semantics model.
+* One annotation interaction matrix.
+* One feedback system.
+* One accessibility standard.
+* One evidence format.
 
-* before/after screenshots or GIF notes
-* touched file list
-* known limitations
-* rollback note
-* manual smoke checklist
+## UX doctrine
 
-Common hard fail conditions:
+* Every visible control must change behavior.
+* Every state-changing action must provide feedback.
+* Every destructive action must be previewable, undoable, or explicitly confirmed.
+* Every panel must be keyboard-usable.
+* Every large-document workflow must degrade gracefully.
 
-* new dead-state UI
-* duplicate command path
-* skipped tests
-* silent failure path
-* prompt-based input flow
-* inaccessible keyboard trap
-* broken undo/redo for owned document actions
+## Non-negotiable global constraints
+
+* Static-mode safe only.
+* No backend required for this program.
+* No new `window.prompt`, `window.confirm`, or placeholder panels in shipped flows.
+* No direct UI mutation of document bytes after A1 lands.
+* No unresolved package-lock / install drift.
+* No regression in current working flows while upgrading the shell.
