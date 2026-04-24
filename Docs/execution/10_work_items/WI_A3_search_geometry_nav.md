@@ -1,90 +1,57 @@
-﻿# WI — A3 Search with Hit Geometry + Deep Navigation
+﻿# AGENT A3 PROMPT — Search with Hit Geometry + Navigation
 
-## Role
+## Mission
 
-You are **A3**. You own product-grade search.
+You are **A3**. Replace stubbed search with a real document search experience integrated into the viewer, sidebar, thumbnails, and top nav.
 
-## Owned write scope
+## Owned scope
 
-* search state
-* search panel
-* top-nav search wiring
-* search result model
-* page hit highlighting
-* thumbnail hit badges
-* search navigation hooks
+* `frontend/src/components/sidebar/Search*`
+* `frontend/src/components/shell/TopNav.tsx` search wiring
+* `frontend/src/adapters/pdf-renderer/PdfRendererAdapter.ts`
+* `frontend/src/core/search/**`
+* active hit navigation model
 
 ## Forbidden scope
 
+* thumbnail page menu
 * macro UI
-* thumbnail context menu logic
-* review thread model
+* review-threading UI
 * command dispatcher internals
-
-## Product leap target
-
-Turn search from “string matching” into **document navigation intelligence**.
 
 ## Must implement
 
-### 1. Search panel
+1. Search panel replacing any stub:
 
-Features:
+   * query input
+   * result count
+   * grouped-by-page results
+   * active result state
+   * next/previous
+2. Hit geometry support:
 
-* query box
-* result count
-* grouped by page
-* snippets
-* hit navigation
-* active result
-* clear/reset
-* persistent query state while document remains open
+   * extract page hit rectangles where possible
+   * scroll-to-hit
+   * flash/highlight active hit on page
+3. Top nav search box wiring:
 
-### 2. Hit geometry
+   * debounced search
+   * Enter = next hit
+   * clear/reset behavior
+4. Thumbnail integration:
 
-Support:
+   * hit counts badge per page
+5. State robustness:
 
-* hit rectangles where possible
-* active hit highlight on page
-* scroll-to-hit
-* highlight persistence until next query or clear
-
-### 3. Top-nav integration
-
-* debounced search
-* Enter = next hit
-* Shift+Enter = previous hit
-* escape clears active hit focus
-* clear button resets panel and canvas highlights
-
-### 4. Thumbnail integration
-
-* hit count per page
-* filter pages with hits
-* jump from hit to page reliably
-
-### 5. Deep-link foundation
-
-Add state shape for:
-
-* search result deep link
-* future bookmark/comment/search convergence
-
-## “Next-level” additions
-
-* search history dropdown
-* regex toggle hook
-* case/whole-word toggle
-* page heatmap strip
-* pin current search
-* “convert search hit to bookmark/comment” hook point
+   * search survives page navigation
+   * active hit remains consistent until query changes
 
 ## Required UX rules
 
-* no duplicate hit rendering
-* stable active result state
-* large result sets remain responsive
-* query changes clear stale hit selection cleanly
+* empty search is not an error
+* no duplicate results for same hit
+* changing query clears stale active-hit state
+* large search sets must remain responsive
 
 ## Strict pass tests
 
@@ -94,33 +61,20 @@ Automated:
 * `corepack pnpm --filter frontend lint`
 * `corepack pnpm --filter frontend test -- search`
 
-Required tests:
+Required test cases:
 
-* grouped results by page
-* click result jumps correctly
+* query returns grouped results
+* clicking result jumps to correct page
 * next/previous cycles correctly
-* active hit highlight renders
-* hit count badge updates
-* clear resets search state
-
-Negative tests:
-
-* empty query is not treated as error
-* changing query invalidates old active result
-* large document search does not lock UI in test harness
+* hit highlight renders for active result
+* clearing search clears result state
 
 Manual validations:
 
-* repeated searches on same doc remain stable
-* active hit survives page switching
-* top-nav search and sidebar search stay in sync
+* search in long PDF remains usable
+* thumbnail badges update
+* active hit follows navigation without losing context
 
 Evidence:
 
 * `Docs/execution/30_evidence/A3/RESULT.md`
-
-Rollback criteria:
-
-* stale active-hit state after query change
-* mismatch between panel result and canvas highlight
-* search panel remains stub-like

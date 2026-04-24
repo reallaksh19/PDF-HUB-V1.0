@@ -1,10 +1,6 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
-import type {
-  AnnotationStyle,
-  PdfAnnotation,
-  ReviewStatus,
-} from './types';
+import type { PdfAnnotation } from './types';
 
 export type AlignMode =
   | 'left'
@@ -43,9 +39,6 @@ interface AnnotationActions {
   duplicateSelection: () => void;
   alignSelection: (mode: AlignMode) => void;
   distributeSelection: (mode: DistributeMode) => void;
-  setReviewStatusForSelection: (status: ReviewStatus) => void;
-  toggleLockSelection: () => void;
-  updateStyleForSelection: (stylePatch: Partial<AnnotationStyle>) => void;
 }
 
 const MAX_HISTORY = 50;
@@ -417,96 +410,6 @@ export const useAnnotationStore = create<AnnotationState & AnnotationActions>((s
 
       const nextAnnotations = state.annotations.map(
         (annotation) => nextById.get(annotation.id) ?? annotation,
-      );
-
-      return snapshot(state, nextAnnotations);
-    }),
-
-  setReviewStatusForSelection: (status) =>
-    set((state) => {
-      if (state.selectedAnnotationIds.length === 0) return state;
-
-      const selectedSet = new Set(state.selectedAnnotationIds);
-      const nextAnnotations = state.annotations.map((annotation) =>
-        selectedSet.has(annotation.id)
-          ? {
-              ...annotation,
-              data: {
-                ...annotation.data,
-                reviewStatus: status,
-              },
-              updatedAt: Date.now(),
-            }
-          : annotation,
-      );
-
-      return snapshot(state, nextAnnotations);
-    }),
-
-  toggleLockSelection: () =>
-    set((state) => {
-      if (state.selectedAnnotationIds.length === 0) return state;
-
-      const selectedSet = new Set(state.selectedAnnotationIds);
-      const shouldLock = state.annotations.some(
-        (annotation) =>
-          selectedSet.has(annotation.id) && annotation.data.locked !== true,
-      );
-
-      const nextAnnotations = state.annotations.map((annotation) =>
-        selectedSet.has(annotation.id)
-          ? {
-              ...annotation,
-              data: {
-                ...annotation.data,
-                locked: shouldLock,
-              },
-              updatedAt: Date.now(),
-            }
-          : annotation,
-      );
-
-      return snapshot(state, nextAnnotations);
-    }),
-
-  updateStyleForSelection: (stylePatch) =>
-    set((state) => {
-      if (state.selectedAnnotationIds.length === 0) return state;
-
-      const selectedSet = new Set(state.selectedAnnotationIds);
-      const nextAnnotations = state.annotations.map((annotation) =>
-        selectedSet.has(annotation.id)
-          ? {
-              ...annotation,
-              data: {
-                ...annotation.data,
-                ...(stylePatch.fill ? { backgroundColor: stylePatch.fill } : {}),
-                ...(stylePatch.stroke ? { borderColor: stylePatch.stroke } : {}),
-                ...(stylePatch.strokeWidth !== undefined
-                  ? { borderWidth: stylePatch.strokeWidth }
-                  : {}),
-                ...(stylePatch.textColor ? { textColor: stylePatch.textColor } : {}),
-                ...(stylePatch.opacity !== undefined
-                  ? { opacity: stylePatch.opacity }
-                  : {}),
-                ...(stylePatch.fontSize !== undefined
-                  ? { fontSize: stylePatch.fontSize }
-                  : {}),
-                ...(stylePatch.fontWeight
-                  ? { fontWeight: stylePatch.fontWeight }
-                  : {}),
-                ...(stylePatch.textAlign ? { textAlign: stylePatch.textAlign } : {}),
-                style: {
-                  ...(annotation.data.style &&
-                  typeof annotation.data.style === 'object'
-                    ? (annotation.data.style as AnnotationStyle)
-                    : {}),
-                  ...stylePatch,
-                },
-              },
-              updatedAt: Date.now(),
-            }
-          : annotation,
       );
 
       return snapshot(state, nextAnnotations);

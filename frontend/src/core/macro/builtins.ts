@@ -65,46 +65,6 @@ export const BUILTIN_MACROS: Record<string, MacroRecipe> = {
     ],
   },
 
-  add_file_date_footer_selected: {
-    id: 'add_file_date_footer_selected',
-    name: 'Add file/date footer to selected pages',
-    steps: [
-      {
-        op: 'header_footer_text',
-        selector: { mode: 'selected' },
-        zone: 'footer',
-        text: '{file} | {date} | Page {page}',
-        align: 'center',
-        marginX: 24,
-        marginY: 18,
-        fontSize: 10,
-        color: '#334155',
-        opacity: 0.9,
-        pageNumberToken: true,
-        fileNameToken: true,
-        dateToken: true,
-      },
-    ],
-  },
-
-  batch_text_selected: {
-    id: 'batch_text_selected',
-    name: 'Batch text on selected pages',
-    steps: [
-      {
-        op: 'draw_text_on_pages',
-        selector: { mode: 'selected' },
-        text: 'REVIEW COPY',
-        x: 36,
-        y: 36,
-        fontSize: 16,
-        color: '#b91c1c',
-        opacity: 0.9,
-        align: 'left',
-      },
-    ],
-  },
-
   review_pack_header_footer: {
     id: 'review_pack_header_footer',
     name: 'Review pack header/footer',
