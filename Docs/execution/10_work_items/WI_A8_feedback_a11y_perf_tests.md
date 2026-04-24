@@ -36,6 +36,4 @@ Add robust user feedback, accessibility compliance, performance hardening, and r
 - [ ] Files changed list
 - [ ] Pass-test output snippets
 - [ ] Manual validation results
-- [ ] Known risks and follow-ups
-
-
+- [ ] Known risks and follow-ups

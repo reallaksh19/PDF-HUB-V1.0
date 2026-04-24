@@ -37,6 +37,4 @@ Create one typed command/action path and product-safe undo/redo for document mut
 - [ ] Files changed list
 - [ ] Pass-test output snippets
 - [ ] Manual validation results
-- [ ] Known risks and follow-ups
-
-
+- [ ] Known risks and follow-ups

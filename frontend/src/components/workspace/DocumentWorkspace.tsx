@@ -1,5 +1,5 @@
 import React from 'react';
-import { UploadCloud, Lock } from 'lucide-react';
+import { UploadCloud, Lock, AlertCircle } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 
@@ -7,8 +7,10 @@ import { PdfRendererAdapter, type TextLayerItem } from '@/adapters/pdf-renderer/
 import { loadAnnotations, saveAnnotations } from '@/core/annotations/persistence';
 import { useAnnotationStore } from '@/core/annotations/store';
 import type { PdfAnnotation, Rect, AnnotationType, Point2D } from '@/core/annotations/types';
+import { readFillColor, readStrokeColor, readStrokeWidth } from '@/core/annotations/readers';
 import { useEditorStore } from '@/core/editor/store';
 import { useSessionStore } from '@/core/session/store';
+import { useSearchStore } from '@/core/search/store';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 
@@ -766,7 +768,8 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
       activeTool === 'comment' ||
       activeTool === 'stamp' ||
       activeTool === 'highlight' ||
-      activeTool === 'shape' ||
+      activeTool === 'rectangle' ||
+      activeTool === 'ellipse' ||
       activeTool === 'line' ||
       activeTool === 'arrow' ||
       activeTool === 'callout'
@@ -821,6 +824,8 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
           </span>
         ))}
       </div>
+
+      <SearchOverlay pageNumber={pageNumber} scale={scale} />
 
       {textSelectionDraft && (
         <>
@@ -1084,6 +1089,20 @@ const BoxNode: React.FC<{
           }}
         />
       )}
+
+      {/* Status Indicators */}
+      <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+        {annotation.data.locked && (
+          <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+            <Lock className="w-3 h-3" />
+          </div>
+        )}
+        {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+          <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+            <AlertCircle className="w-3 h-3" />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1226,6 +1245,20 @@ const CalloutNode: React.FC<{
             }}
           />
         )}
+
+        {/* Status Indicators */}
+        <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+          {annotation.data.locked && (
+            <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+              <Lock className="w-3 h-3" />
+            </div>
+          )}
+          {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+            <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+              <AlertCircle className="w-3 h-3" />
+            </div>
+          )}
+        </div>
       </div>
     </>
   );
@@ -1292,6 +1325,20 @@ const LineLikeNode: React.FC<{
           }}
         />
       )}
+
+      {/* Status Indicators */}
+      <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+        {annotation.data.locked && (
+          <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+            <Lock className="w-3 h-3" />
+          </div>
+        )}
+        {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+          <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+            <AlertCircle className="w-3 h-3" />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1323,10 +1370,22 @@ function buildAnnotation(
         },
       };
 
-    case 'shape':
+    case 'rectangle':
       return {
         ...common,
-        type: 'shape',
+        type: 'rectangle',
+        rect: { x, y, width: 180, height: 60 },
+        data: {
+          backgroundColor: 'transparent',
+          borderColor: '#3b82f6',
+          borderWidth: 2,
+        },
+      };
+
+    case 'ellipse':
+      return {
+        ...common,
+        type: 'ellipse',
         rect: { x, y, width: 180, height: 60 },
         data: {
           backgroundColor: 'transparent',
@@ -1530,7 +1589,7 @@ function readZIndex(annotation: PdfAnnotation): number {
 
 function renderVisibleContent(annotation: PdfAnnotation): React.ReactNode {
   if (annotation.type === 'highlight') return null;
-  if (annotation.type === 'shape') return null;
+  if (annotation.type === 'rectangle' || annotation.type === 'ellipse') return null;
   if (annotation.type === 'line' || annotation.type === 'arrow') return null;
 
   const text = readText(annotation);
@@ -1546,25 +1605,9 @@ function annotationVisualStyle(
   annotation: PdfAnnotation,
   selected: boolean,
 ): React.CSSProperties {
-  const backgroundColor =
-    typeof annotation.data.backgroundColor === 'string'
-      ? annotation.data.backgroundColor
-      : annotation.type === 'highlight'
-      ? '#fde047'
-      : annotation.type === 'comment'
-      ? '#fff7cc'
-      : annotation.type === 'stamp'
-      ? '#fef2f2'
-      : 'transparent';
-
-  const borderColor =
-    typeof annotation.data.borderColor === 'string'
-      ? annotation.data.borderColor
-      : annotation.type === 'shape'
-      ? '#3b82f6'
-      : annotation.type === 'stamp'
-      ? '#ef4444'
-      : '#60a5fa';
+  const backgroundColor = readFillColor(annotation);
+  const borderColor = readStrokeColor(annotation);
+  const borderWidth = readStrokeWidth(annotation);
 
   const textColor =
     typeof annotation.data.textColor === 'string'
@@ -1573,27 +1616,36 @@ function annotationVisualStyle(
       ? '#b91c1c'
       : '#0f172a';
 
-  const borderWidth =
-    typeof annotation.data.borderWidth === 'number'
-      ? annotation.data.borderWidth
-      : annotation.type === 'shape'
-      ? 2
-      : 1;
-
-  return {
-    backgroundColor,
-    border: `${selected ? Math.max(borderWidth, 2) : borderWidth}px solid ${
-      selected ? '#2563eb' : borderColor
-    }`,
-    color: textColor,
-    opacity:
+  const opacity =
       typeof annotation.data.opacity === 'number'
         ? annotation.data.opacity
         : annotation.type === 'highlight'
         ? 0.38
-        : 0.9,
+        : 0.9;
+
+  let borderRadius = 2;
+  if (annotation.type === 'comment') borderRadius = 6;
+  if (annotation.type === 'ellipse') borderRadius = 9999;
+  if (typeof annotation.data.cornerRadius === 'number') borderRadius = annotation.data.cornerRadius;
+
+  return {
+    backgroundColor,
+    border: `${selected ? Math.max(borderWidth, 2) : borderWidth}px ${annotation.data.strokeStyle || 'solid'} ${
+      selected ? '#2563eb' : borderColor
+    }`,
+    color: textColor,
+    opacity,
     boxShadow: selected ? '0 0 0 2px rgba(37, 99, 235, 0.18)' : undefined,
-    borderRadius: annotation.type === 'comment' ? 6 : 2,
+    borderRadius,
+    fontWeight: annotation.data.fontWeight,
+    fontStyle: annotation.data.fontStyle,
+    textDecoration: annotation.data.textDecoration,
+    fontFamily: typeof annotation.data.fontFamily === 'string' ? annotation.data.fontFamily : 'inherit',
+    lineHeight: typeof annotation.data.lineHeight === 'number' ? annotation.data.lineHeight : 'normal',
+    textAlign:
+      typeof annotation.data.textAlign === 'string'
+        ? (annotation.data.textAlign as 'left' | 'center' | 'right' | 'justify')
+        : 'left',
   };
 }
 
@@ -1604,6 +1656,34 @@ function autoSizeRectForText(text: string, fontSize: number, rect: Rect): Rect {
   const height = Math.max(36, lines.length * (fontSize * 1.5) + 14);
   return { ...rect, width, height };
 }
+
+const SearchOverlay: React.FC<{ pageNumber: number, scale: number }> = ({ pageNumber, scale }) => {
+  const { hits, activeHitIndex } = useSearchStore();
+
+  const pageHits = hits.filter(h => h.pageNumber === pageNumber);
+  if (pageHits.length === 0) return null;
+
+  return (
+    <div className="absolute inset-0 pointer-events-none z-20">
+      {pageHits.map((hit, idx) => {
+        // We find if this hit is globally the active one
+        const isActive = hits.indexOf(hit) === activeHitIndex;
+        return (
+          <div
+            key={idx}
+            className={`absolute rounded transition-all ${isActive ? 'bg-orange-400/50 ring-2 ring-orange-500' : 'bg-yellow-400/30'}`}
+            style={{
+              left: hit.rect.x * scale,
+              top: hit.rect.y * scale,
+              width: hit.rect.width * scale,
+              height: hit.rect.height * scale,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
 
 function computeCalloutLeader(anchor: Point2D, rect: Rect) {
   const left = rect.x;

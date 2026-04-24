@@ -1,6 +1,7 @@
 ﻿import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import type { PDFPage } from 'pdf-lib';
 import type { PdfAnnotation } from '@/core/annotations/types';
+import { readFillColor, readStrokeColor, readStrokeWidth } from '@/core/annotations/readers';
 
 type HeaderFooterOptions = {
   pages: number[];
@@ -55,13 +56,19 @@ function resolveHeaderFooterTokens(
 
   if (values.enablePageNumberToken) {
     output = output.replaceAll('{page}', String(values.page));
+    output = output.replaceAll('{{page}}', String(values.page));
     output = output.replaceAll('{pages}', String(values.pages));
+    output = output.replaceAll('{{total_pages}}', String(values.pages));
+    output = output.replaceAll('{{pages}}', String(values.pages));
   }
   if (values.enableFileNameToken) {
     output = output.replaceAll('{file}', values.file);
+    output = output.replaceAll('{{file_name}}', values.file);
+    output = output.replaceAll('{{file}}', values.file);
   }
   if (values.enableDateToken) {
     output = output.replaceAll('{date}', values.date);
+    output = output.replaceAll('{{date}}', values.date);
   }
 
   return output;
@@ -237,19 +244,44 @@ export class PdfEditAdapter {
   }
 
   static async movePage(baseBytes: Uint8Array, fromIndex: number, toIndex: number): Promise<Uint8Array> {
+    return this.movePagesAsBlock(baseBytes, [fromIndex], toIndex, 'before');
+  }
+
+  static async movePagesAsBlock(
+    baseBytes: Uint8Array,
+    pageIndices: number[], // 0-based
+    targetIndex: number, // 0-based
+    placement: 'before' | 'after' | 'append'
+  ): Promise<Uint8Array> {
     const srcDoc = await PDFDocument.load(baseBytes);
     const pageCount = srcDoc.getPageCount();
 
-    if (fromIndex < 0 || fromIndex >= pageCount || toIndex < 0 || toIndex >= pageCount) {
-      throw new Error('Page move indices are out of range');
+    // Dynamically import the pure helper to keep adapter decoupled, or just inline the logic.
+    // For now, let's just implement the zero-based version inline here, or call the 1-based helper if imported.
+    const allPages = Array.from({ length: pageCount }, (_, i) => i);
+    const selectedSet = new Set(pageIndices);
+
+    const validSelected = pageIndices.filter(p => p >= 0 && p < pageCount);
+    if (validSelected.length === 0) return baseBytes;
+
+    const remainingPages = allPages.filter(p => !selectedSet.has(p));
+    let insertIndex = remainingPages.length;
+
+    if (placement !== 'append') {
+      const remainingTargetIndex = remainingPages.indexOf(targetIndex);
+      if (remainingTargetIndex !== -1) {
+        insertIndex = placement === 'before' ? remainingTargetIndex : remainingTargetIndex + 1;
+      }
     }
 
-    const order = srcDoc.getPageIndices();
-    const [moved] = order.splice(fromIndex, 1);
-    order.splice(toIndex, 0, moved);
+    const newOrder = [
+      ...remainingPages.slice(0, insertIndex),
+      ...validSelected,
+      ...remainingPages.slice(insertIndex)
+    ];
 
     const out = await PDFDocument.create();
-    const copied = await out.copyPages(srcDoc, order);
+    const copied = await out.copyPages(srcDoc, newOrder);
     copied.forEach((page) => out.addPage(page));
     return await out.save();
   }
@@ -273,6 +305,138 @@ export class PdfEditAdapter {
     const copied = await out.copyPages(srcDoc, order);
     copied.forEach((page) => out.addPage(page));
     return await out.save();
+  }
+
+  static async insertImage(
+    baseBytes: Uint8Array,
+    options: {
+      pages: number[];
+      imageBytes: Uint8Array;
+      mimeType: 'image/jpeg' | 'image/png';
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      scale?: number;
+    }
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const image = options.mimeType === 'image/jpeg'
+      ? await pdfDoc.embedJpg(options.imageBytes)
+      : await pdfDoc.embedPng(options.imageBytes);
+
+    let drawWidth = image.width;
+    let drawHeight = image.height;
+
+    if (options.width && options.height) {
+      drawWidth = options.width;
+      drawHeight = options.height;
+    } else if (options.scale) {
+      drawWidth = image.width * options.scale;
+      drawHeight = image.height * options.scale;
+    }
+
+    for (const pageIndex of options.pages) {
+      const page = pdfDoc.getPage(pageIndex);
+      const pageHeight = page.getHeight();
+
+      const drawY = pageHeight - options.y - drawHeight;
+
+      page.drawImage(image, {
+        x: options.x,
+        y: drawY,
+        width: drawWidth,
+        height: drawHeight,
+      });
+    }
+
+    return await pdfDoc.save();
+  }
+
+  static async injectRichText(
+    baseBytes: Uint8Array,
+    options: {
+      pages: number[];
+      text: string;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      fontSize: number;
+      color: string;
+      opacity: number;
+      fileName: string;
+      now: Date;
+      enablePageNumberToken: boolean;
+      enableFileNameToken: boolean;
+      enableDateToken: boolean;
+      textAlign: 'left' | 'center' | 'right' | 'justify';
+    }
+  ): Promise<Uint8Array> {
+    const pdfDoc = await PDFDocument.load(baseBytes);
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const totalPages = pdfDoc.getPageCount();
+
+    for (const pageIndex of options.pages) {
+      const page = pdfDoc.getPage(pageIndex);
+      const width = page.getWidth();
+      const height = page.getHeight();
+
+      const text = resolveHeaderFooterTokens(options.text, {
+        page: pageIndex + 1,
+        pages: totalPages,
+        file: options.fileName,
+        date: options.now.toLocaleDateString(),
+        enablePageNumberToken: options.enablePageNumberToken,
+        enableFileNameToken: options.enableFileNameToken,
+        enableDateToken: options.enableDateToken,
+      });
+
+      const maxWidth = options.width ?? (width - options.x);
+
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let currentLine = words[0];
+
+      for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const testLine = currentLine + ' ' + word;
+        const testWidth = font.widthOfTextAtSize(testLine, options.fontSize);
+        if (testWidth > maxWidth && i > 0) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      lines.push(currentLine);
+
+      let drawY = height - options.y - options.fontSize;
+
+      for (const line of lines) {
+        const lineWidth = font.widthOfTextAtSize(line, options.fontSize);
+        let drawX = options.x;
+        if (options.textAlign === 'center') {
+          drawX = options.x + (maxWidth - lineWidth) / 2;
+        } else if (options.textAlign === 'right') {
+          drawX = options.x + maxWidth - lineWidth;
+        }
+
+        page.drawText(line, {
+          x: drawX,
+          y: drawY,
+          font,
+          size: options.fontSize,
+          color: hexToRgb(options.color),
+          opacity: options.opacity,
+          maxWidth
+        });
+
+        drawY -= options.fontSize * 1.2;
+      }
+    }
+
+    return await pdfDoc.save();
   }
 
   static async addHeaderFooterText(
@@ -349,18 +513,15 @@ export class PdfEditAdapter {
         (typeof annotation.data.content === 'string' && annotation.data.content) ||
         (annotation.type === 'stamp' ? 'STAMP' : '');
 
-      const borderColor =
-        typeof annotation.data.borderColor === 'string'
-          ? hexToRgb(annotation.data.borderColor)
-          : annotation.type === 'stamp'
-          ? rgb(0.85, 0.2, 0.2)
-          : rgb(0.2, 0.4, 0.8);
-      const fillColor =
-        typeof annotation.data.backgroundColor === 'string'
-          ? hexToRgb(annotation.data.backgroundColor)
-          : annotation.type === 'stamp'
-          ? rgb(1, 0.94, 0.94)
-          : rgb(0.96, 0.97, 1);
+      const borderColorHex = readStrokeColor(annotation);
+      const fillColorHex = readFillColor(annotation);
+      const strokeWidth = readStrokeWidth(annotation);
+
+      // Fallback logic inside readers may return strings like 'transparent'. pdf-lib needs actual rgb/rgba.
+      // We will handle 'transparent' by omitting color parameters where possible,
+      // but for simplicity here we'll map transparent to undefined or white.
+      const borderColor = borderColorHex === 'transparent' ? undefined : hexToRgb(borderColorHex);
+      const fillColor = fillColorHex === 'transparent' ? undefined : hexToRgb(fillColorHex);
 
       if (annotation.type === 'highlight') {
         page.drawRectangle({
@@ -368,24 +529,35 @@ export class PdfEditAdapter {
           y,
           width: annotation.rect.width,
           height: annotation.rect.height,
-          color:
-            typeof annotation.data.backgroundColor === 'string'
-              ? hexToRgb(annotation.data.backgroundColor)
-              : rgb(1, 0.92, 0.2),
+          color: fillColor ?? rgb(1, 0.92, 0.2),
           opacity: typeof annotation.data.opacity === 'number' ? annotation.data.opacity : 0.35,
           borderWidth: 0,
         });
         continue;
       }
 
-      if (annotation.type === 'shape') {
+      if (annotation.type === 'rectangle') {
         page.drawRectangle({
           x,
           y,
           width: annotation.rect.width,
           height: annotation.rect.height,
-          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
+          borderWidth: strokeWidth,
           borderColor,
+          color: fillColor,
+        });
+        continue;
+      }
+
+      if (annotation.type === 'ellipse') {
+        page.drawEllipse({
+          x: x + annotation.rect.width / 2,
+          y: y + annotation.rect.height / 2,
+          xScale: annotation.rect.width / 2,
+          yScale: annotation.rect.height / 2,
+          borderWidth: strokeWidth,
+          borderColor,
+          color: fillColor,
         });
         continue;
       }
@@ -400,15 +572,17 @@ export class PdfEditAdapter {
         const x2 = x + points[2];
         const y2 = y + annotation.rect.height - points[3];
 
-        page.drawLine({
-          start: { x: x1, y: y1 },
-          end: { x: x2, y: y2 },
-          thickness: 2,
-          color: borderColor,
-        });
+        if (borderColor) {
+          page.drawLine({
+            start: { x: x1, y: y1 },
+            end: { x: x2, y: y2 },
+            thickness: strokeWidth,
+            color: borderColor,
+          });
 
-        if (annotation.type === 'arrow') {
-          drawArrowHead(page, x1, y1, x2, y2, borderColor, 2);
+          if (annotation.type === 'arrow') {
+            drawArrowHead(page, x1, y1, x2, y2, borderColor, strokeWidth);
+          }
         }
         continue;
       }
@@ -428,10 +602,11 @@ export class PdfEditAdapter {
           const x2 = x;
           const y2 = y + annotation.rect.height / 2;
 
+        if (borderColor) {
           page.drawLine({
             start: { x: x1, y: y1 },
             end: { x: x2, y: y2 },
-            thickness: 2,
+            thickness: strokeWidth,
             color: borderColor,
           });
         }
@@ -443,16 +618,18 @@ export class PdfEditAdapter {
           height: annotation.rect.height,
           color: fillColor,
           opacity: typeof annotation.data.opacity === 'number' ? annotation.data.opacity : 0.8,
-          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
+          borderWidth: strokeWidth,
           borderColor,
         });
 
-        page.drawLine({
-          start: { x, y: y + annotation.rect.height / 2 },
-          end: { x: x + 18, y: y + annotation.rect.height / 2 },
-          thickness: 2,
-          color: borderColor,
-        });
+        if (borderColor) {
+          page.drawLine({
+            start: { x, y: y + annotation.rect.height / 2 },
+            end: { x: x + 18, y: y + annotation.rect.height / 2 },
+            thickness: strokeWidth,
+            color: borderColor,
+          });
+        }
 
         if (text) {
           page.drawText(text, {
@@ -482,7 +659,7 @@ export class PdfEditAdapter {
           height: annotation.rect.height,
           color: fillColor,
           opacity: typeof annotation.data.opacity === 'number' ? annotation.data.opacity : 0.75,
-          borderWidth: typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 1,
+          borderWidth: strokeWidth,
           borderColor,
         });
 
@@ -510,3 +687,4 @@ export class PdfEditAdapter {
   }
 }
 
+}

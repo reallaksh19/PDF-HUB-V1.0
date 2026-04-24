@@ -35,6 +35,4 @@ Upgrade macro UX with validation, presets, donor binding, and reproducibility.
 - [ ] Files changed list
 - [ ] Pass-test output snippets
 - [ ] Manual validation results
-- [ ] Known risks and follow-ups
-
-
+- [ ] Known risks and follow-ups

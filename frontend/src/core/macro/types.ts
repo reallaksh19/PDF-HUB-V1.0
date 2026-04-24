@@ -39,6 +39,21 @@ export type MacroStep =
       order: number[];
     }
   | {
+      op: 'draw_text_on_pages';
+      selector: PageSelector;
+      text: string;
+      x: number;
+      y: number;
+      fontSize: number;
+      color?: string;
+      opacity?: number;
+      align?: 'left' | 'center' | 'right';
+      fontFamily?: string;
+      pageNumberToken?: boolean;
+      fileNameToken?: boolean;
+      dateToken?: boolean;
+    }
+  | {
       op: 'header_footer_text';
       selector: PageSelector;
       zone: 'header' | 'footer';
@@ -51,6 +66,36 @@ export type MacroStep =
       opacity?: number;
       excludeFirstPage?: boolean;
       excludeLastPage?: boolean;
+      pageNumberToken?: boolean;
+      fileNameToken?: boolean;
+      dateToken?: boolean;
+    }
+  | {
+      op: 'insert_image';
+      selector: PageSelector;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      scale?: number;
+      base64Image?: string;
+      donorFileId?: string;
+    }
+  | {
+      op: 'inject_rich_text';
+      selector: PageSelector;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      text: string;
+      fontSize: number;
+      fontFamily?: string;
+      fontWeight?: string;
+      fontStyle?: string;
+      color?: string;
+      opacity?: number;
+      textAlign?: 'left' | 'center' | 'right' | 'justify';
       pageNumberToken?: boolean;
       fileNameToken?: boolean;
       dateToken?: boolean;
