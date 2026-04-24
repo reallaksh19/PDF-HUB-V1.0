@@ -45,8 +45,19 @@ export class KonvaAdapter {
       case 'highlight':
         node = new Konva.Rect({ ...config, fill: 'yellow', opacity: 0.4 });
         break;
-      case 'shape':
+      case 'rectangle':
         node = new Konva.Rect({ ...config, stroke: 'red', strokeWidth: 2 });
+        break;
+      case 'ellipse':
+        node = new Konva.Ellipse({
+          ...config,
+          x: config.x + config.width / 2,
+          y: config.y + config.height / 2,
+          radiusX: config.width / 2,
+          radiusY: config.height / 2,
+          stroke: 'red',
+          strokeWidth: 2
+        });
         break;
       case 'freehand':
         node = new Konva.Line({ ...config, points: annotation.data.points as number[], stroke: 'black', strokeWidth: 2, tension: 0.5 });

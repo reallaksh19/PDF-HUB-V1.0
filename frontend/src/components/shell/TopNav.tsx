@@ -21,7 +21,7 @@ export const TopNav: React.FC = () => {
 
         <div className="hidden md:flex space-x-1 pl-4 ml-4 border-l border-slate-200 dark:border-slate-800">
           <NavLink
-            to="/workspace"
+            to="/"
             className={({ isActive }) =>
               `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 isActive

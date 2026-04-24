@@ -1,15 +1,16 @@
 import React from 'react';
-import { UploadCloud, Lock } from 'lucide-react';
+import { UploadCloud, Lock, AlertCircle } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { VList } from 'virtua';
 
 import { PdfRendererAdapter, type TextLayerItem } from '@/adapters/pdf-renderer/PdfRendererAdapter';
 import { loadAnnotations, saveAnnotations } from '@/core/annotations/persistence';
 import { useAnnotationStore } from '@/core/annotations/store';
 import type { PdfAnnotation, Rect, AnnotationType, Point2D } from '@/core/annotations/types';
+import { readFillColor, readStrokeColor, readStrokeWidth } from '@/core/annotations/readers';
 import { useEditorStore } from '@/core/editor/store';
 import { useSessionStore } from '@/core/session/store';
+import { useSearchStore } from '@/core/search/store';
 import { FileAdapter } from '@/adapters/file/FileAdapter';
 import { PdfEditAdapter } from '@/adapters/pdf-edit/PdfEditAdapter';
 
@@ -68,15 +69,10 @@ export const DocumentWorkspace: React.FC = () => {
   } = useSessionStore();
 
   const { activeTool } = useEditorStore();
-  const { setZoom } = useSessionStore();
 
   const [pdfDoc, setPdfDoc] = React.useState<PDFDocumentProxy | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [loadError, setLoadError] = React.useState<string | null>(null);
-  const containerRef = React.useRef<HTMLDivElement>(null);
-
-  const [isPanning, setIsPanning] = React.useState(false);
-  const lastPanPos = React.useRef<{ x: number; y: number } | null>(null);
 
   const handleBrowse = async () => {
     try {
@@ -171,47 +167,6 @@ export const DocumentWorkspace: React.FC = () => {
     };
   }, [annotations, documentKey]);
 
-  React.useLayoutEffect(() => {
-    if (!pdfDoc || !containerRef.current || viewState.fitMode === 'manual') return;
-
-    let resizeTimer: number;
-
-    const handleResize = async () => {
-      if (!pdfDoc || !containerRef.current) return;
-      try {
-        const page = await pdfDoc.getPage(viewState.currentPage);
-        const viewport = page.getViewport({ scale: 1 });
-        const containerWidth = containerRef.current.clientWidth - 32; // some padding
-        const containerHeight = containerRef.current.clientHeight - 32;
-
-        if (viewState.fitMode === 'width') {
-          const newZoom = (containerWidth / viewport.width) * 100;
-          setZoom(Math.floor(newZoom));
-        } else if (viewState.fitMode === 'page') {
-          const scaleWidth = containerWidth / viewport.width;
-          const scaleHeight = containerHeight / viewport.height;
-          const newZoom = Math.min(scaleWidth, scaleHeight) * 100;
-          setZoom(Math.floor(newZoom));
-        }
-      } catch {
-        // Ignored or logged via external logger in production
-      }
-    };
-
-    const observer = new ResizeObserver(() => {
-      window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(() => void handleResize(), 100);
-    });
-
-    observer.observe(containerRef.current);
-    void handleResize(); // initial calculation
-
-    return () => {
-      observer.disconnect();
-      window.clearTimeout(resizeTimer);
-    };
-  }, [pdfDoc, viewState.fitMode, viewState.currentPage, setZoom]);
-
   if (!workingBytes) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-slate-100 dark:bg-slate-950/50">
@@ -237,7 +192,7 @@ export const DocumentWorkspace: React.FC = () => {
   }
 
   if (loading) {
-    return <div className="h-full flex items-center justify-center text-slate-500">Loading PDF...</div>;
+    return <div className="h-full flex items-center justify-center text-slate-500">Loading PDF…</div>;
   }
 
   if (loadError) {
@@ -246,155 +201,59 @@ export const DocumentWorkspace: React.FC = () => {
 
   if (!pdfDoc) return null;
 
-  const renderPage = (index: number) => {
-    const pageNumber = index + 1;
-    return (
-      <div key={pageNumber} className="flex justify-center mb-8">
-        <PageSurface
-          doc={pdfDoc}
-          pageNumber={pageNumber}
-          scale={viewState.zoom / 100}
-          activeTool={activeTool}
-          pageAnnotations={annotations
-            .filter((annotation) => annotation.pageNumber === pageNumber)
-            .slice()
-            .sort((a, b) => readZIndex(a) - readZIndex(b))}
-          selectedAnnotationIds={selectedAnnotationIds}
-          onActivate={() => setPage(pageNumber)}
-          onCreateAnnotation={(annotation) => {
-            addAnnotation(annotation);
-            setSelection([annotation.id]);
-            setActiveAnnotationId(annotation.id);
-          }}
-          onCreateManyAnnotations={(items) => {
-            items.forEach((item) => addAnnotation(item));
-            if (items.length > 0) {
-              const ids = items.map((item) => item.id);
-              setSelection(ids);
-              setActiveAnnotationId(ids[0] ?? null);
-            }
-          }}
-          onSetSingleSelection={(id) => {
-            setSelection([id]);
-            setActiveAnnotationId(id);
-          }}
-          onToggleSelection={(id) => {
-            toggleSelection(id);
-            setActiveAnnotationId(id);
-          }}
-          onSetSelection={(ids) => {
-            setSelection(ids);
-            setActiveAnnotationId(ids[0] ?? null);
-          }}
-          onClearSelection={clearSelection}
-          onCommitAnnotation={(id, patch) => {
-            updateAnnotation(id, patch);
-          }}
-          onCommitManyAnnotations={(updates) => {
-            updateManyAnnotations(updates);
-          }}
-        />
-      </div>
-    );
-  };
-
-  const renderSingle = () => {
-    return (
-      <div className="flex flex-col items-center">
-        {renderPage(viewState.currentPage - 1)}
-      </div>
-    );
-  };
-
-  const renderTwoPage = () => {
-    const pages = [];
-    let i = 0;
-    while (i < pdfDoc.numPages) {
-      if (i === 0) {
-        // First page isolated
-        pages.push(
-          <div key={`spread-${i}`} className="flex justify-center gap-8 mb-8 w-full">
-            <div className="flex-1 flex justify-end" />
-            <div className="flex-1 flex justify-start">{renderPage(i)}</div>
-          </div>
-        );
-        i++;
-      } else {
-        // Pairs
-        const leftIndex = i;
-        const rightIndex = i + 1 < pdfDoc.numPages ? i + 1 : null;
-        pages.push(
-          <div key={`spread-${i}`} className="flex justify-center gap-8 mb-8 w-full max-w-[2000px]">
-            <div className="flex-1 flex justify-end">{renderPage(leftIndex)}</div>
-            <div className="flex-1 flex justify-start">{rightIndex !== null ? renderPage(rightIndex) : null}</div>
-          </div>
-        );
-        i += 2;
-      }
-    }
-
-    // Only show current spread based on currentPage
-    const currentSpreadIndex = viewState.currentPage === 1 ? 0 : Math.floor((viewState.currentPage) / 2);
-
-    return (
-      <div className="flex flex-col items-center w-full">
-        {pages[currentSpreadIndex]}
-      </div>
-    );
-  };
-
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (activeTool !== 'hand') return;
-    setIsPanning(true);
-    lastPanPos.current = { x: e.clientX, y: e.clientY };
-    if (containerRef.current) {
-      containerRef.current.setPointerCapture(e.pointerId);
-    }
-  };
-
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isPanning || activeTool !== 'hand' || !lastPanPos.current || !containerRef.current) return;
-
-    const dx = e.clientX - lastPanPos.current.x;
-    const dy = e.clientY - lastPanPos.current.y;
-
-    containerRef.current.scrollBy(-dx, -dy);
-    lastPanPos.current = { x: e.clientX, y: e.clientY };
-  };
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (activeTool !== 'hand') return;
-    setIsPanning(false);
-    lastPanPos.current = null;
-    if (containerRef.current && containerRef.current.hasPointerCapture(e.pointerId)) {
-      containerRef.current.releasePointerCapture(e.pointerId);
-    }
-  };
-
   return (
-    <div
-      ref={containerRef}
-      className={`flex flex-col h-full bg-slate-200 dark:bg-slate-950 overflow-auto ${
-        activeTool === 'hand' ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''
-      }`}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
-    >
+    <div className="flex flex-col h-full bg-slate-200 dark:bg-slate-950 overflow-auto">
       <div className="min-h-full flex flex-col items-center py-8">
-        {viewState.viewMode === 'continuous' ? (
-          <VList
-            style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
-            overscan={3}
-          >
-            {Array.from({ length: pdfDoc.numPages }, (_, i) => renderPage(i))}
-          </VList>
-        ) : viewState.viewMode === 'single' ? (
-          renderSingle()
-        ) : (
-          renderTwoPage()
-        )}
+        {Array.from({ length: pdfDoc.numPages }, (_, index) => {
+          const pageNumber = index + 1;
+          return (
+            <PageSurface
+              key={pageNumber}
+              doc={pdfDoc}
+              pageNumber={pageNumber}
+              scale={viewState.zoom / 100}
+              activeTool={activeTool}
+              pageAnnotations={annotations
+                .filter((annotation) => annotation.pageNumber === pageNumber)
+                .slice()
+                .sort((a, b) => readZIndex(a) - readZIndex(b))}
+              selectedAnnotationIds={selectedAnnotationIds}
+              onActivate={() => setPage(pageNumber)}
+              onCreateAnnotation={(annotation) => {
+                addAnnotation(annotation);
+                setSelection([annotation.id]);
+                setActiveAnnotationId(annotation.id);
+              }}
+              onCreateManyAnnotations={(items) => {
+                items.forEach((item) => addAnnotation(item));
+                if (items.length > 0) {
+                  const ids = items.map((item) => item.id);
+                  setSelection(ids);
+                  setActiveAnnotationId(ids[0] ?? null);
+                }
+              }}
+              onSetSingleSelection={(id) => {
+                setSelection([id]);
+                setActiveAnnotationId(id);
+              }}
+              onToggleSelection={(id) => {
+                toggleSelection(id);
+                setActiveAnnotationId(id);
+              }}
+              onSetSelection={(ids) => {
+                setSelection(ids);
+                setActiveAnnotationId(ids[0] ?? null);
+              }}
+              onClearSelection={clearSelection}
+              onCommitAnnotation={(id, patch) => {
+                updateAnnotation(id, patch);
+              }}
+              onCommitManyAnnotations={(updates) => {
+                updateManyAnnotations(updates);
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -790,18 +649,7 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
   };
 
   const handleTextSelectionMouseUp = () => {
-    if (
-      activeTool !== 'select' &&
-      activeTool !== 'highlight' &&
-      activeTool !== 'underline' &&
-      activeTool !== 'strikeout' &&
-      activeTool !== 'comment' &&
-      activeTool !== 'callout' &&
-      activeTool !== 'sticky-note'
-    ) {
-      return;
-    }
-    if (!pageRef.current) return;
+    if (activeTool !== 'select' || !pageRef.current) return;
 
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) {
@@ -823,69 +671,6 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
 
     if (rects.length === 0) {
       setTextSelectionDraft(null);
-      return;
-    }
-
-    if (
-      activeTool === 'highlight' ||
-      activeTool === 'underline' ||
-      activeTool === 'strikeout'
-    ) {
-      const items = rects.map((rect) =>
-        buildTextMarkAnnotation(pageNumber, rect, activeTool),
-      );
-      onCreateManyAnnotations(items);
-      clearTextSelectionDraft();
-      return;
-    }
-
-    if (
-      activeTool === 'comment' ||
-      activeTool === 'callout' ||
-      activeTool === 'sticky-note'
-    ) {
-      const unionRect = unionRects(rects);
-      const noteAnnotation = (() => {
-        if (activeTool === 'sticky-note') {
-          const base = buildAnnotation(
-            'sticky-note',
-            pageNumber,
-            unionRect.x,
-            unionRect.y,
-          );
-          return {
-            ...base,
-            data: {
-              ...base.data,
-              text,
-            },
-          };
-        }
-        if (activeTool === 'comment') {
-          const base = buildAnnotation(
-            'comment',
-            pageNumber,
-            unionRect.x,
-            unionRect.y,
-          );
-          return {
-            ...base,
-            data: {
-              ...base.data,
-              text,
-            },
-          };
-        }
-        return buildCalloutFromSelection(
-          pageNumber,
-          unionRect,
-          text,
-          pageWidth,
-          pageHeight,
-        );
-      })();
-      onCreateAnnotation(noteAnnotation);
-      clearTextSelectionDraft();
       return;
     }
 
@@ -981,12 +766,10 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
     if (
       activeTool === 'textbox' ||
       activeTool === 'comment' ||
-      activeTool === 'sticky-note' ||
       activeTool === 'stamp' ||
       activeTool === 'highlight' ||
-      activeTool === 'underline' ||
-      activeTool === 'strikeout' ||
-      activeTool === 'shape' ||
+      activeTool === 'rectangle' ||
+      activeTool === 'ellipse' ||
       activeTool === 'line' ||
       activeTool === 'arrow' ||
       activeTool === 'callout'
@@ -1041,6 +824,8 @@ const PageSurface: React.FC<PageSurfaceProps> = ({
           </span>
         ))}
       </div>
+
+      <SearchOverlay pageNumber={pageNumber} scale={scale} />
 
       {textSelectionDraft && (
         <>
@@ -1234,145 +1019,6 @@ const BoxNode: React.FC<{
   onCommitText,
 }) => {
   const style = annotationVisualStyle(annotation, selected);
-  const reviewStatus =
-    typeof annotation.data.reviewStatus === 'string'
-      ? annotation.data.reviewStatus
-      : null;
-
-  if (annotation.type === 'underline' || annotation.type === 'strikeout') {
-    const strokeColor =
-      typeof annotation.data.borderColor === 'string'
-        ? annotation.data.borderColor
-        : annotation.type === 'underline'
-        ? '#2563eb'
-        : '#b91c1c';
-    const lineY = annotation.type === 'underline' ? rect.height - 2 : rect.height / 2;
-
-    return (
-      <div
-        className="absolute pointer-events-auto"
-        style={{
-          left: rect.x * scale,
-          top: rect.y * scale,
-          width: rect.width * scale,
-          height: rect.height * scale,
-        }}
-        onClick={onSelect}
-        onMouseDown={(event) => {
-          if (annotation.data.locked === true) return;
-          onTransform(event, 'move');
-        }}
-      >
-        <div
-          className="absolute left-0"
-          style={{
-            top: lineY * scale,
-            width: '100%',
-            height: `${Math.max(2, (typeof annotation.data.borderWidth === 'number' ? annotation.data.borderWidth : 2) * scale)}px`,
-            backgroundColor: strokeColor,
-            opacity: typeof annotation.data.opacity === 'number' ? annotation.data.opacity : 0.95,
-          }}
-        />
-        {selected && (
-          <div className="absolute inset-0 pointer-events-none ring-2 ring-blue-600/70" />
-        )}
-        {reviewStatus && (
-          <div className="absolute -top-5 left-0 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-            {reviewStatus.toUpperCase()}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (annotation.type === 'sticky-note') {
-    const noteSize = Math.max(16, rect.width * scale);
-    return (
-      <div
-        className="absolute pointer-events-auto"
-        style={{
-          left: rect.x * scale,
-          top: rect.y * scale,
-          width: noteSize,
-          height: noteSize,
-        }}
-      >
-        <div
-          className="h-full w-full rounded-full border shadow-sm"
-          style={{
-            backgroundColor:
-              typeof annotation.data.backgroundColor === 'string'
-                ? annotation.data.backgroundColor
-                : '#facc15',
-            borderColor:
-              selected
-                ? '#2563eb'
-                : typeof annotation.data.borderColor === 'string'
-                ? annotation.data.borderColor
-                : '#a16207',
-            borderWidth: selected ? 2 : 1,
-          }}
-          onClick={onSelect}
-          onMouseDown={(event) => {
-            if (annotation.data.locked === true) return;
-            onTransform(event, 'move');
-          }}
-          onDoubleClick={(event) => {
-            event.stopPropagation();
-            if (annotation.data.locked === true) return;
-            onDoubleClick();
-          }}
-          title={typeof annotation.data.title === 'string' ? annotation.data.title : 'Sticky note'}
-        />
-        {selected && (
-          <div
-            className="absolute z-20 rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-700 shadow-xl"
-            style={{
-              left: noteSize + 8,
-              top: -4,
-              width: 220,
-              minHeight: 90,
-            }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            {editingId === annotation.id ? (
-              <textarea
-                autoFocus
-                className="h-full min-h-[72px] w-full resize-y bg-white text-xs text-slate-900 outline-none"
-                value={editingValue}
-                onChange={(event) => setEditingValue(event.target.value)}
-                onBlur={() => {
-                  onCommitText(editingValue);
-                  setEditingId(null);
-                }}
-                onKeyDown={(event) => {
-                  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-                    onCommitText(editingValue);
-                    setEditingId(null);
-                  }
-                  if (event.key === 'Escape') {
-                    setEditingId(null);
-                  }
-                }}
-              />
-            ) : (
-              <button
-                type="button"
-                className="w-full text-left whitespace-pre-wrap break-words"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (annotation.data.locked === true) return;
-                  onDoubleClick();
-                }}
-              >
-                {readText(annotation) || 'Empty note'}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
 
   return (
     <div
@@ -1394,12 +1040,6 @@ const BoxNode: React.FC<{
         onTransform(event, 'move');
       }}
     >
-      {reviewStatus && (
-        <div className="absolute -top-5 left-0 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-          {reviewStatus.toUpperCase()}
-        </div>
-      )}
-
       {annotation.data.locked === true && (
         <div className="absolute top-1 right-1 opacity-70">
           <Lock className="w-3.5 h-3.5" />
@@ -1449,6 +1089,20 @@ const BoxNode: React.FC<{
           }}
         />
       )}
+
+      {/* Status Indicators */}
+      <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+        {annotation.data.locked && (
+          <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+            <Lock className="w-3 h-3" />
+          </div>
+        )}
+        {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+          <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+            <AlertCircle className="w-3 h-3" />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1591,6 +1245,20 @@ const CalloutNode: React.FC<{
             }}
           />
         )}
+
+        {/* Status Indicators */}
+        <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+          {annotation.data.locked && (
+            <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+              <Lock className="w-3 h-3" />
+            </div>
+          )}
+          {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+            <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+              <AlertCircle className="w-3 h-3" />
+            </div>
+          )}
+        </div>
       </div>
     </>
   );
@@ -1657,6 +1325,20 @@ const LineLikeNode: React.FC<{
           }}
         />
       )}
+
+      {/* Status Indicators */}
+      <div className="absolute -top-3 -right-3 flex gap-1 pointer-events-none">
+        {annotation.data.locked && (
+          <div className="bg-slate-800 text-white rounded-full p-0.5 shadow-sm border border-slate-700">
+            <Lock className="w-3 h-3" />
+          </div>
+        )}
+        {annotation.data.status && annotation.data.status !== 'resolved' && annotation.data.status !== 'approved' && (
+          <div className="bg-amber-100 text-amber-600 rounded-full p-0.5 shadow-sm border border-amber-200">
+            <AlertCircle className="w-3 h-3" />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -1688,34 +1370,22 @@ function buildAnnotation(
         },
       };
 
-    case 'underline':
+    case 'rectangle':
       return {
         ...common,
-        type: 'underline',
-        rect: { x, y, width: 180, height: 26 },
+        type: 'rectangle',
+        rect: { x, y, width: 180, height: 60 },
         data: {
-          borderColor: '#2563eb',
+          backgroundColor: 'transparent',
+          borderColor: '#3b82f6',
           borderWidth: 2,
-          opacity: 0.95,
         },
       };
 
-    case 'strikeout':
+    case 'ellipse':
       return {
         ...common,
-        type: 'strikeout',
-        rect: { x, y, width: 180, height: 26 },
-        data: {
-          borderColor: '#b91c1c',
-          borderWidth: 2,
-          opacity: 0.95,
-        },
-      };
-
-    case 'shape':
-      return {
-        ...common,
-        type: 'shape',
+        type: 'ellipse',
         rect: { x, y, width: 180, height: 60 },
         data: {
           backgroundColor: 'transparent',
@@ -1753,22 +1423,6 @@ function buildAnnotation(
           textColor: '#111827',
           fontSize: 12,
           autoSize: true,
-        },
-      };
-
-    case 'sticky-note':
-      return {
-        ...common,
-        type: 'sticky-note',
-        rect: { x, y, width: 22, height: 22 },
-        data: {
-          text: 'New sticky note',
-          title: 'Sticky note',
-          backgroundColor: '#facc15',
-          borderColor: '#a16207',
-          textColor: '#111827',
-          fontSize: 12,
-          autoSize: false,
         },
       };
 
@@ -1844,31 +1498,6 @@ function buildHighlightAnnotation(pageNumber: number, rect: Rect): PdfAnnotation
   };
 }
 
-function buildTextMarkAnnotation(
-  pageNumber: number,
-  rect: Rect,
-  type: 'highlight' | 'underline' | 'strikeout',
-): PdfAnnotation {
-  if (type === 'highlight') {
-    return buildHighlightAnnotation(pageNumber, rect);
-  }
-
-  const now = Date.now();
-  return {
-    id: uuidv4(),
-    type,
-    pageNumber,
-    rect,
-    data: {
-      borderColor: type === 'underline' ? '#2563eb' : '#b91c1c',
-      borderWidth: 2,
-      opacity: 0.95,
-    },
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
 function buildCalloutFromSelection(
   pageNumber: number,
   sourceRect: Rect,
@@ -1915,13 +1544,7 @@ function buildCalloutFromSelection(
 }
 
 function isTextLike(type: AnnotationType): boolean {
-  return (
-    type === 'textbox' ||
-    type === 'comment' ||
-    type === 'stamp' ||
-    type === 'callout' ||
-    type === 'sticky-note'
-  );
+  return type === 'textbox' || type === 'comment' || type === 'stamp' || type === 'callout';
 }
 
 function readText(annotation: PdfAnnotation): string {
@@ -1973,7 +1596,6 @@ function renderVisibleContent(annotation: PdfAnnotation): React.ReactNode {
   if (text.trim().length > 0) return text;
 
   if (annotation.type === 'comment') return 'Note';
-  if (annotation.type === 'sticky-note') return 'Sticky';
   if (annotation.type === 'callout') return 'Callout';
   if (annotation.type === 'textbox') return 'Text';
   return null;
@@ -1983,31 +1605,9 @@ function annotationVisualStyle(
   annotation: PdfAnnotation,
   selected: boolean,
 ): React.CSSProperties {
-  const backgroundColor =
-    typeof annotation.data.backgroundColor === 'string'
-      ? annotation.data.backgroundColor
-      : typeof annotation.data.fillColor === 'string'
-      ? annotation.data.fillColor
-      : annotation.type === 'highlight'
-      ? '#fde047'
-      : annotation.type === 'sticky-note'
-      ? '#facc15'
-      : annotation.type === 'comment'
-      ? '#fff7cc'
-      : annotation.type === 'stamp'
-      ? '#fef2f2'
-      : 'transparent';
-
-  const borderColor =
-    typeof annotation.data.borderColor === 'string'
-      ? annotation.data.borderColor
-      : typeof annotation.data.strokeColor === 'string'
-      ? annotation.data.strokeColor
-      : (annotation.type === 'rectangle' || annotation.type === 'ellipse')
-      ? '#3b82f6'
-      : annotation.type === 'stamp'
-      ? '#ef4444'
-      : '#60a5fa';
+  const backgroundColor = readFillColor(annotation);
+  const borderColor = readStrokeColor(annotation);
+  const borderWidth = readStrokeWidth(annotation);
 
   const textColor =
     typeof annotation.data.textColor === 'string'
@@ -2015,15 +1615,6 @@ function annotationVisualStyle(
       : annotation.type === 'stamp'
       ? '#b91c1c'
       : '#0f172a';
-
-  const borderWidth =
-    typeof annotation.data.borderWidth === 'number'
-      ? annotation.data.borderWidth
-      : typeof annotation.data.strokeWidth === 'number'
-      ? annotation.data.strokeWidth
-      : (annotation.type === 'rectangle' || annotation.type === 'ellipse')
-      ? 2
-      : 1;
 
   const opacity =
       typeof annotation.data.opacity === 'number'
@@ -2053,7 +1644,7 @@ function annotationVisualStyle(
     lineHeight: typeof annotation.data.lineHeight === 'number' ? annotation.data.lineHeight : 'normal',
     textAlign:
       typeof annotation.data.textAlign === 'string'
-        ? (annotation.data.textAlign as any)
+        ? (annotation.data.textAlign as 'left' | 'center' | 'right' | 'justify')
         : 'left',
   };
 }
@@ -2065,6 +1656,34 @@ function autoSizeRectForText(text: string, fontSize: number, rect: Rect): Rect {
   const height = Math.max(36, lines.length * (fontSize * 1.5) + 14);
   return { ...rect, width, height };
 }
+
+const SearchOverlay: React.FC<{ pageNumber: number, scale: number }> = ({ pageNumber, scale }) => {
+  const { hits, activeHitIndex } = useSearchStore();
+
+  const pageHits = hits.filter(h => h.pageNumber === pageNumber);
+  if (pageHits.length === 0) return null;
+
+  return (
+    <div className="absolute inset-0 pointer-events-none z-20">
+      {pageHits.map((hit, idx) => {
+        // We find if this hit is globally the active one
+        const isActive = hits.indexOf(hit) === activeHitIndex;
+        return (
+          <div
+            key={idx}
+            className={`absolute rounded transition-all ${isActive ? 'bg-orange-400/50 ring-2 ring-orange-500' : 'bg-yellow-400/30'}`}
+            style={{
+              left: hit.rect.x * scale,
+              top: hit.rect.y * scale,
+              width: hit.rect.width * scale,
+              height: hit.rect.height * scale,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
 
 function computeCalloutLeader(anchor: Point2D, rect: Rect) {
   const left = rect.x;
